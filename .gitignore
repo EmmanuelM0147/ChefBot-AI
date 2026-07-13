@@ -1,0 +1,36 @@
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Local data (large recipe dumps; keep folder via .gitkeep)
+dataset/*.json
+dataset/*.csv
+dataset/*.zip
+!dataset/.gitkeep
+
+# Logs / temp
+*.log
+*.tmp
+.cache/
