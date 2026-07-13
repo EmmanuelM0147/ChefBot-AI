@@ -2,7 +2,7 @@
 
 Grounded, inventory-aware recipe generation with **FastAPI**, **Qdrant**, **Gemini**, **PostgreSQL monitoring**, and a **Streamlit** UI.
 
-ChefBot retrieves real recipes from a vector index, constrains generation to that context, streams the answer with **Gemini 2.5 Flash**, appends **tool-calculated** macro estimates, and logs every transaction for evaluation (LLM Zoomcamp-style).
+ChefBot retrieves real recipes from a vector index, constrains generation to that context, streams the answer with **Gemini 2.5 Flash**, appends **tool-calculated** macro estimates, and logs every transaction for evaluation.
 
 ---
 
