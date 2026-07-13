@@ -5,7 +5,9 @@ ChefBot Streamlit UI - inventory in, streamed recipe out, thumbs feedback.
 from __future__ import annotations
 
 import os
-from collections.abc import AsyncIterator, Iterator
+import re
+from collections.abc import Iterator
+from datetime import datetime
 from typing import Any
 
 import httpx
@@ -16,18 +18,12 @@ load_dotenv()
 
 
 def resolve_api_base_url() -> str:
-    """
-    Prefer Streamlit Cloud secrets, then env, then deployed Vercel API.
-
-    On Streamlit Community Cloud set (or rely on the default below):
-      CHEFBOT_API_URL = "https://chef-bot-ai-one.vercel.app"
-    """
+    """Prefer Streamlit secrets, then env, then deployed Vercel API."""
     try:
         secret_url = st.secrets.get("CHEFBOT_API_URL")  # type: ignore[attr-defined]
         if secret_url:
             return str(secret_url).strip().strip('"').rstrip("/")
     except Exception:
-        # secrets.toml may be absent in local/dev runs
         pass
 
     return (
@@ -58,58 +54,455 @@ DIET_OPTIONS = [
     "Kosher",
 ]
 
+QUICK_STARTS = {
+    "Weeknight protein": "chicken, garlic, lemon, olive oil, rice",
+    "Pantry pasta": "pasta, canned tomatoes, garlic, olive oil, basil",
+    "Veggie skillet": "eggs, spinach, onion, potato, cheese",
+    "Soup night": "carrots, celery, onion, lentils, broth",
+}
 
-st.set_page_config(
-    page_title="ChefBot AI",
-    page_icon="🥗",
-    layout="centered",
+MACRO_SPLIT = re.compile(
+    r"\n---\n## Estimated Macros \(tool-calculated\)",
+    flags=re.IGNORECASE,
 )
 
-st.title("ChefBot AI")
-st.caption("Tell us what's in your fridge - get a grounded, streamed recipe.")
-st.caption(f"API: `{API_BASE_URL}`")
+SHARED_CSS = """
+@import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,560;9..144,700&family=Outfit:wght@300;400;500;600&display=swap');
 
-with st.form("recipe_form", clear_on_submit=False):
-    inventory_raw = st.text_area(
-        "Fridge inventory",
-        placeholder="e.g. chicken, garlic, tomatoes, rice, olive oil",
-        help="Comma-separated list of ingredients you have on hand.",
-        height=120,
-    )
-    dietary_choices = st.multiselect(
-        "Allergies & diets",
-        options=DIET_OPTIONS,
-        help="Select any allergies or dietary preferences to enforce.",
-    )
-    submitted = st.form_submit_button("Generate Recipe", type="primary")
+html, body, [data-testid="stAppViewContainer"], .stApp {
+  background: var(--app-bg) !important;
+  color: var(--text);
+  font-family: "Outfit", sans-serif;
+}
+
+[data-testid="stHeader"] { background: transparent !important; }
+div[data-testid="stDecoration"], [data-testid="stDeployButton"] {
+  display: none !important;
+}
+
+.block-container {
+  max-width: 860px !important;
+  padding-top: 1.4rem !important;
+  padding-bottom: 3.2rem !important;
+}
+.stApp { overflow-x: hidden; }
+
+
+@keyframes rise {
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes shimmer {
+  0% { background-position: 0% 50%; }
+  100% { background-position: 100% 50%; }
+}
+@keyframes pulse-dot {
+  0%, 100% { opacity: 0.35; transform: scale(0.9); }
+  50% { opacity: 1; transform: scale(1); }
+}
+
+.topbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 0.75rem;
+  animation: rise 0.45s ease both;
+}
+.topbar-meta {
+  font-size: 0.8rem;
+  color: var(--muted);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.hero { animation: rise 0.7s ease both; margin-bottom: 1.25rem; }
+.hero-kicker {
+  display: inline-flex; align-items: center; gap: 0.45rem;
+  font-size: 0.78rem; letter-spacing: 0.14em; text-transform: uppercase;
+  color: var(--accent); font-weight: 500; margin-bottom: 0.75rem;
+}
+.hero-kicker span.dot {
+  width: 7px; height: 7px; border-radius: 50%; background: var(--accent);
+  box-shadow: 0 0 0 4px var(--accent-glow);
+}
+.hero-brand {
+  font-family: "Fraunces", Georgia, serif;
+  font-size: clamp(2.6rem, 6.5vw, 3.8rem);
+  font-weight: 700; letter-spacing: -0.035em; line-height: 0.98;
+  margin: 0 0 0.75rem 0; color: var(--text);
+}
+.hero-sub {
+  font-size: 1.05rem; font-weight: 300; color: var(--muted);
+  max-width: 36rem; margin: 0; line-height: 1.55;
+}
+
+div[data-testid="stForm"] {
+  animation: rise 0.75s ease 0.05s both;
+  border: 1px solid var(--line) !important;
+  background: var(--panel) !important;
+  border-radius: 22px !important;
+  padding: 1.1rem 1.15rem 0.95rem 1.15rem !important;
+  box-shadow: var(--shadow);
+}
+
+.quick-label {
+  font-size: 0.8rem; color: var(--muted); margin: 0.2rem 0 0.45rem 0;
+}
+
+.stButton > button[kind="secondary"] {
+  background: var(--chip-bg) !important;
+  border: 1px solid var(--line) !important;
+  color: var(--text) !important;
+  border-radius: 999px !important;
+  font-size: 0.85rem !important;
+  font-weight: 500 !important;
+}
+.stButton > button[kind="secondary"]:hover {
+  border-color: var(--accent) !important;
+  color: var(--accent) !important;
+}
+
+.stFormSubmitButton > button {
+  width: 100%;
+  background: var(--cta-bg) !important;
+  background-size: 180% 180% !important;
+  animation: shimmer 4s ease infinite;
+  color: var(--cta-text) !important;
+  border: none !important;
+  border-radius: 14px !important;
+  font-weight: 600 !important;
+  font-size: 1rem !important;
+  padding: 0.72rem 1.2rem !important;
+  box-shadow: var(--cta-shadow);
+}
+.stFormSubmitButton > button:hover {
+  filter: brightness(1.04);
+}
+.stTextArea textarea:focus, .stMultiSelect [data-baseweb="select"] > div:focus-within {
+  border-color: var(--accent) !important;
+  box-shadow: 0 0 0 3px var(--accent-glow) !important;
+}
+
+.stTextArea textarea, .stMultiSelect [data-baseweb="select"] > div {
+  background: var(--input-bg) !important;
+  color: var(--text) !important;
+  border: 1px solid var(--line) !important;
+  border-radius: 14px !important;
+}
+.stTextArea textarea { min-height: 108px !important; font-size: 1rem !important; }
+
+label p, [data-testid="stWidgetLabel"] p {
+  font-size: 0.92rem !important; font-weight: 500 !important; color: var(--text) !important;
+}
+
+.section-head {
+  display: flex; align-items: baseline; justify-content: space-between;
+  gap: 1rem; margin: 1.6rem 0 0.8rem 0; animation: rise 0.5s ease both;
+}
+.section-label {
+  font-family: "Fraunces", Georgia, serif;
+  font-size: 1.55rem; letter-spacing: -0.02em; margin: 0; color: var(--text);
+}
+.live-pill {
+  display: inline-flex; align-items: center; gap: 0.4rem;
+  font-size: 0.75rem; color: var(--accent-2);
+  border: 1px solid var(--accent-2-line); border-radius: 999px; padding: 0.22rem 0.65rem;
+}
+.live-pill i {
+  width: 7px; height: 7px; border-radius: 50%; background: var(--accent-2);
+  animation: pulse-dot 1.2s ease infinite; display: inline-block;
+}
+
+.dish-title {
+  font-family: "Fraunces", Georgia, serif;
+  font-size: clamp(1.5rem, 3.4vw, 2rem);
+  letter-spacing: -0.02em; line-height: 1.15;
+  margin: 0 0 0.85rem 0; color: var(--text);
+}
+.recipe-shell {
+  animation: rise 0.55s ease both;
+  border: 1px solid var(--line);
+  background: var(--recipe-bg);
+  border-radius: 20px;
+  padding: 1.3rem 1.35rem 1.15rem 1.35rem;
+  box-shadow: var(--shadow);
+  line-height: 1.7;
+  color: var(--text);
+}
+.recipe-shell h1, .recipe-shell h2, .recipe-shell h3 {
+  font-family: "Fraunces", Georgia, serif; letter-spacing: -0.02em;
+}
+.macro-card {
+  margin-top: 1rem; border: 1px solid var(--accent-2-line);
+  background: var(--macro-bg); border-radius: 16px;
+  padding: 1rem 1.15rem; color: var(--muted); font-size: 0.95rem;
+}
+.macro-card h2, .macro-card h3 {
+  font-family: "Fraunces", Georgia, serif;
+  color: var(--accent-2) !important; font-size: 1.1rem !important; margin-top: 0 !important;
+}
+
+.empty-stage {
+  animation: rise 0.65s ease 0.1s both;
+  margin-top: 1.35rem; border: 1px solid var(--line); border-radius: 20px;
+  padding: 1.4rem 1.3rem; background: var(--empty-bg);
+}
+.empty-stage h3 {
+  font-family: "Fraunces", Georgia, serif; font-size: 1.3rem;
+  margin: 0 0 0.4rem 0; color: var(--text);
+}
+.empty-stage p { margin: 0; color: var(--muted); line-height: 1.55; }
+
+.feedback-wrap {
+  margin-top: 1.25rem; padding: 1rem 1.1rem; border-radius: 16px;
+  border: 1px solid var(--line); background: var(--panel);
+}
+.history-card {
+  border: 1px solid var(--line); border-radius: 14px; padding: 0.75rem 0.9rem;
+  background: var(--chip-bg); margin-bottom: 0.55rem;
+}
+.history-card strong { color: var(--text); }
+.foot {
+  margin-top: 2.2rem; color: var(--muted); font-size: 0.8rem; text-align: center;
+}
+[data-testid="stCaption"] { color: var(--muted) !important; }
+div[data-testid="stAlert"] { border-radius: 14px !important; }
+[data-testid="stSidebar"] {
+  background: var(--panel) !important;
+  border-right: 1px solid var(--line) !important;
+}
+[data-testid="stSidebar"] * { color: var(--text); }
+.pref-hint {
+  font-size: 0.78rem; color: var(--muted); margin: 0.15rem 0 0.85rem 0; line-height: 1.4;
+}
+
+/* Mobile-first refinements */
+@media (max-width: 768px) {
+  .block-container {
+    max-width: 100% !important;
+    padding-left: 0.9rem !important;
+    padding-right: 0.9rem !important;
+    padding-top: 0.7rem !important;
+    padding-bottom: 2.4rem !important;
+  }
+
+  .topbar { margin-bottom: 0.35rem; }
+  .topbar-meta { font-size: 0.7rem; letter-spacing: 0.06em; }
+
+  .hero { margin-bottom: 0.85rem; }
+  .hero-kicker { font-size: 0.7rem; margin-bottom: 0.5rem; letter-spacing: 0.12em; }
+  .hero-brand {
+    font-size: clamp(2.15rem, 11vw, 2.75rem) !important;
+    margin-bottom: 0.55rem !important;
+  }
+  .hero-sub {
+    font-size: 0.94rem !important;
+    line-height: 1.5 !important;
+    max-width: none;
+  }
+
+  .quick-label { margin-bottom: 0.35rem; }
+
+  div[data-testid="stForm"] {
+    border-radius: 16px !important;
+    padding: 0.85rem 0.8rem 0.7rem !important;
+  }
+  .stTextArea textarea {
+    min-height: 96px !important;
+    font-size: 16px !important; /* avoids iOS zoom on focus */
+  }
+
+  .section-head {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.35rem;
+    margin: 1.15rem 0 0.6rem 0;
+  }
+  .section-label { font-size: 1.28rem; }
+  .dish-title { font-size: clamp(1.28rem, 6.5vw, 1.55rem) !important; }
+
+  .recipe-shell,
+  .empty-stage,
+  .feedback-wrap,
+  .macro-card {
+    border-radius: 14px;
+    padding: 0.95rem 0.9rem;
+  }
+  .empty-stage { margin-top: 1rem; }
+  .empty-stage h3 { font-size: 1.15rem; }
+  .macro-card { font-size: 0.9rem; }
+
+  /* Touch-friendly controls; allow label wrap */
+  .stButton > button,
+  .stDownloadButton > button,
+  .stFormSubmitButton > button {
+    min-height: 2.75rem !important;
+    white-space: normal !important;
+    line-height: 1.25 !important;
+    padding-top: 0.5rem !important;
+    padding-bottom: 0.5rem !important;
+  }
+  .stButton > button[kind="secondary"] {
+    border-radius: 12px !important;
+    font-size: 0.82rem !important;
+  }
+
+  /* Wrap column rows into usable mobile grids */
+  div[data-testid="stHorizontalBlock"] {
+    flex-wrap: wrap !important;
+    gap: 0.4rem !important;
+  }
+  div[data-testid="stHorizontalBlock"] > div[data-testid="column"] {
+    min-width: calc(50% - 0.25rem) !important;
+    flex: 1 1 calc(50% - 0.25rem) !important;
+  }
+
+  .feedback-wrap { margin-top: 1rem; }
+  .foot {
+    margin-top: 1.5rem;
+    font-size: 0.72rem;
+    line-height: 1.4;
+    padding: 0 0.25rem;
+  }
+
+  [data-testid="stSidebar"] {
+    border-right: none !important;
+  }
+  [data-testid="stSidebar"] .block-container {
+    padding-left: 1rem !important;
+    padding-right: 1rem !important;
+  }
+}
+
+@media (max-width: 420px) {
+  .block-container {
+    padding-left: 0.7rem !important;
+    padding-right: 0.7rem !important;
+  }
+  .hero-sub { font-size: 0.9rem !important; }
+  .stButton > button[kind="secondary"] { font-size: 0.78rem !important; }
+}
+"""
+
+COMPACT_CSS = """
+.block-container { max-width: 720px !important; }
+"""
+
+WIDE_CSS = """
+.block-container { max-width: 1040px !important; }
+@media (max-width: 768px) {
+  .block-container { max-width: 100% !important; }
+}
+"""
+
+LARGE_TYPE_CSS = """
+html, body, .stApp { font-size: 17px !important; }
+.hero-brand { font-size: clamp(2.9rem, 7vw, 4.1rem) !important; }
+.recipe-shell { font-size: 1.05rem !important; line-height: 1.8 !important; }
+@media (max-width: 768px) {
+  html, body, .stApp { font-size: 16px !important; }
+  .hero-brand { font-size: clamp(2.25rem, 11vw, 2.9rem) !important; }
+}
+"""
+
+REDUCED_MOTION_CSS = """
+*, *::before, *::after {
+  animation: none !important;
+  transition: none !important;
+}
+"""
+
+DARK_THEME_CSS = """
+:root {
+  --app-bg:
+    radial-gradient(900px 420px at 12% -8%, rgba(124, 176, 131, 0.22), transparent 58%),
+    radial-gradient(700px 380px at 96% 8%, rgba(226, 194, 122, 0.12), transparent 52%),
+    linear-gradient(165deg, #121a16 0%, #0f1412 42%, #0c100e 100%);
+  --panel: rgba(24, 36, 30, 0.82);
+  --line: rgba(214, 232, 214, 0.12);
+  --text: #eef6ef;
+  --muted: #9fb4a6;
+  --accent: #7cb083;
+  --accent-glow: rgba(124, 176, 131, 0.18);
+  --accent-2: #e2c27a;
+  --accent-2-line: rgba(226, 194, 122, 0.28);
+  --input-bg: rgba(10, 14, 12, 0.72);
+  --chip-bg: rgba(255,255,255,0.03);
+  --recipe-bg: linear-gradient(180deg, rgba(28, 42, 35, 0.92), rgba(16, 24, 20, 0.92));
+  --macro-bg: rgba(226, 194, 122, 0.07);
+  --empty-bg: linear-gradient(135deg, rgba(124, 176, 131, 0.08), transparent 45%), rgba(18, 28, 23, 0.55);
+  --shadow: 0 30px 80px rgba(0, 0, 0, 0.35);
+  --cta-bg: linear-gradient(120deg, #8fbf94, #7cb083 40%, #c9b06a);
+  --cta-text: #102016;
+  --cta-shadow: 0 12px 30px rgba(124, 176, 131, 0.22);
+}
+"""
+
+
+def init_preferences() -> None:
+    defaults = {
+        "layout_density": "Comfortable",
+        "type_scale": "Standard",
+        "show_starters": True,
+        "show_macros": True,
+        "reduced_motion": False,
+        "result_limit": 5,
+        "inventory_input": "",
+        "diet_input": [],
+        "recipe_history": [],
+    }
+    for key, value in defaults.items():
+        if key not in st.session_state:
+            st.session_state[key] = value
+    # Drop legacy theme / compact prefs
+    st.session_state.pop("theme_mode", None)
+    if st.session_state.pop("compact_mode", None):
+        st.session_state["layout_density"] = "Compact"
 
 
 def parse_inventory(raw: str) -> list[str]:
     return [item.strip() for item in raw.split(",") if item.strip()]
 
 
-async def stream_recipe_async(payload: dict[str, Any]) -> AsyncIterator[str]:
-    """Async POST to FastAPI and yield response text chunk-by-chunk."""
-    timeout = httpx.Timeout(connect=20.0, read=None, write=60.0, pool=20.0)
-    async with httpx.AsyncClient(timeout=timeout) as client:
-        async with client.stream("POST", GENERATE_URL, json=payload) as response:
-            if response.status_code >= 400:
-                body = (await response.aread()).decode("utf-8", errors="replace")
-                raise httpx.HTTPStatusError(
-                    f"API error {response.status_code}: {body}",
-                    request=response.request,
-                    response=response,
-                )
-            transaction_id = response.headers.get("X-Transaction-Id")
-            if transaction_id:
-                st.session_state["last_transaction_id"] = transaction_id
-            async for chunk in response.aiter_text():
-                if chunk:
-                    yield chunk
+def split_recipe_and_macros(text: str) -> tuple[str, str | None]:
+    parts = MACRO_SPLIT.split(text, maxsplit=1)
+    if len(parts) == 1:
+        return text.strip(), None
+    return parts[0].strip(), parts[1].strip()
+
+
+def extract_dish_title(body: str) -> tuple[str | None, str]:
+    lines = [line.strip() for line in body.splitlines()]
+    while lines and not lines[0]:
+        lines.pop(0)
+    if not lines:
+        return None, body
+    first = lines[0]
+    title_match = re.match(r"^#{1,3}\s+(.+)$", first)
+    if title_match:
+        return title_match.group(1).strip(), "\n".join(lines[1:]).strip()
+    bold = re.match(r"^\*\*(.+?)\*\*\s*$", first)
+    if bold:
+        return bold.group(1).strip(), "\n".join(lines[1:]).strip()
+    if len(first) <= 80 and not first.endswith(":") and not first.startswith("-"):
+        return first, "\n".join(lines[1:]).strip()
+    return None, body
+
+
+def friendly_error(exc: Exception) -> str:
+    message = str(exc)
+    lowered = message.lower()
+    if "429" in message or "resource_exhausted" in lowered or "quota" in lowered:
+        return "The kitchen is at capacity right now. Give it a minute and try again."
+    if "connect" in lowered or "refused" in lowered or "timed out" in lowered:
+        return "We couldn't reach the recipe service. Please try again in a moment."
+    if "502" in message or "retrieval failed" in lowered:
+        return "Recipe search is temporarily unavailable. Please try again shortly."
+    return "Something went wrong while generating your recipe. Please try again."
 
 
 def stream_recipe(payload: dict[str, Any]) -> Iterator[str]:
-    """Sync bridge for st.write_stream with transaction-id capture."""
     timeout = httpx.Timeout(connect=20.0, read=None, write=60.0, pool=20.0)
     with httpx.Client(timeout=timeout) as client:
         with client.stream("POST", GENERATE_URL, json=payload) as response:
@@ -133,54 +526,302 @@ def post_feedback(transaction_id: str, feedback: str) -> None:
     response.raise_for_status()
 
 
-if submitted:
+def push_history(recipe_text: str, payload: dict[str, Any]) -> None:
+    title, _ = extract_dish_title(split_recipe_and_macros(recipe_text)[0])
+    entry = {
+        "title": title or "Untitled plate",
+        "recipe": recipe_text,
+        "payload": payload,
+        "at": datetime.now().strftime("%H:%M"),
+    }
+    history = list(st.session_state.get("recipe_history") or [])
+    history.insert(0, entry)
+    st.session_state["recipe_history"] = history[:8]
+
+
+def render_recipe(text: str) -> None:
+    body, macros = split_recipe_and_macros(text)
+    title, remainder = extract_dish_title(body)
+    st.markdown('<div class="recipe-shell">', unsafe_allow_html=True)
+    if title:
+        st.markdown(f'<p class="dish-title">{title}</p>', unsafe_allow_html=True)
+        if remainder:
+            st.markdown(remainder)
+    else:
+        st.markdown(body)
+    st.markdown("</div>", unsafe_allow_html=True)
+    if macros and st.session_state.get("show_macros", True):
+        st.markdown('<div class="macro-card">', unsafe_allow_html=True)
+        st.markdown("### Estimated macros")
+        st.markdown(macros)
+        st.markdown("</div>", unsafe_allow_html=True)
+
+
+def generate_and_render(payload: dict[str, Any]) -> None:
+    st.markdown(
+        """
+        <div class="section-head">
+          <p class="section-label">Your plate</p>
+          <span class="live-pill"><i></i> Streaming</span>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    status = st.status("Chef is plating your recipe...", expanded=False)
+    try:
+        chunks: list[str] = []
+        placeholder = st.empty()
+        for piece in stream_recipe(payload):
+            chunks.append(piece)
+            live = "".join(chunks)
+            title, remainder = extract_dish_title(MACRO_SPLIT.split(live, maxsplit=1)[0])
+            with placeholder.container():
+                st.markdown('<div class="recipe-shell">', unsafe_allow_html=True)
+                if title:
+                    st.markdown(
+                        f'<p class="dish-title">{title}</p>',
+                        unsafe_allow_html=True,
+                    )
+                    st.markdown(remainder or "")
+                else:
+                    st.markdown(live)
+                st.markdown("</div>", unsafe_allow_html=True)
+
+        recipe_text = "".join(chunks)
+        placeholder.empty()
+        render_recipe(recipe_text)
+        status.update(label="Ready to cook", state="complete")
+        st.session_state["last_recipe"] = recipe_text
+        st.session_state["last_payload"] = payload
+        st.session_state["show_feedback"] = True
+        push_history(recipe_text, payload)
+    except Exception as exc:  # noqa: BLE001
+        status.update(label="Couldn't finish this plate", state="error")
+        st.error(friendly_error(exc))
+        st.session_state["show_feedback"] = False
+
+
+# ---------------------------------------------------------------------------
+# App
+# ---------------------------------------------------------------------------
+
+st.set_page_config(
+    page_title="ChefBot AI",
+    page_icon="🍳",
+    layout="centered",
+    initial_sidebar_state="collapsed",
+)
+
+init_preferences()
+
+layout = st.session_state.get("layout_density", "Comfortable")
+layout_css = COMPACT_CSS if layout == "Compact" else (WIDE_CSS if layout == "Wide" else "")
+type_css = LARGE_TYPE_CSS if st.session_state.get("type_scale") == "Large" else ""
+motion_css = REDUCED_MOTION_CSS if st.session_state.get("reduced_motion") else ""
+st.markdown(
+    f"<style>{DARK_THEME_CSS}{SHARED_CSS}{layout_css}{type_css}{motion_css}</style>",
+    unsafe_allow_html=True,
+)
+
+# --- Sidebar: preferences & history ---
+with st.sidebar:
+    st.markdown("### Experience")
+    st.markdown(
+        '<p class="pref-hint">Preferences stay for this browser session.</p>',
+        unsafe_allow_html=True,
+    )
+    st.selectbox(
+        "Layout",
+        options=["Compact", "Comfortable", "Wide"],
+        key="layout_density",
+        help="How wide the cooking workspace feels.",
+    )
+    st.selectbox(
+        "Text size",
+        options=["Standard", "Large"],
+        key="type_scale",
+    )
+    st.toggle("Show starter ideas", key="show_starters")
+    st.toggle("Show macro card", key="show_macros")
+    st.toggle("Reduce motion", key="reduced_motion")
+    st.slider(
+        "Recipes to ground on",
+        min_value=3,
+        max_value=8,
+        key="result_limit",
+        help="More context can improve grounding; fewer is faster.",
+    )
+
+    st.divider()
+    st.markdown("### Actions")
+    if st.button("New plate", use_container_width=True):
+        st.session_state["last_recipe"] = ""
+        st.session_state["show_feedback"] = False
+        st.session_state["last_transaction_id"] = None
+        st.rerun()
+    if st.button("Clear fridge input", use_container_width=True):
+        st.session_state["inventory_input"] = ""
+        st.session_state["diet_input"] = []
+        st.rerun()
+    if st.session_state.get("last_payload") and st.button(
+        "Regenerate last plate", use_container_width=True
+    ):
+        st.session_state["force_regenerate"] = True
+        st.rerun()
+    if st.session_state.get("recipe_history") and st.button(
+        "Clear recent plates", use_container_width=True
+    ):
+        st.session_state["recipe_history"] = []
+        st.rerun()
+
+    st.divider()
+    st.markdown("### Recent plates")
+    history = st.session_state.get("recipe_history") or []
+    if not history:
+        st.caption("Your generated plates will appear here.")
+    for index, item in enumerate(history):
+        with st.container():
+            st.markdown(
+                f'<div class="history-card"><strong>{item["title"]}</strong>'
+                f'<br/><span style="color:var(--muted);font-size:0.8rem;">'
+                f'{item["at"]}</span></div>',
+                unsafe_allow_html=True,
+            )
+            hist_cols = st.columns(2)
+            with hist_cols[0]:
+                if st.button("Open", key=f"open_hist_{index}", use_container_width=True):
+                    st.session_state["last_recipe"] = item["recipe"]
+                    st.session_state["last_payload"] = item["payload"]
+                    st.session_state["show_feedback"] = True
+                    st.rerun()
+            with hist_cols[1]:
+                if st.button("Reuse", key=f"reuse_hist_{index}", use_container_width=True):
+                    payload = item.get("payload") or {}
+                    st.session_state["inventory_input"] = ", ".join(
+                        payload.get("inventory") or []
+                    )
+                    diets = payload.get("dietary_choices") or ""
+                    st.session_state["diet_input"] = [
+                        d.strip() for d in diets.split(",") if d.strip()
+                    ]
+                    st.rerun()
+
+st.markdown(
+    f'<div class="topbar"><span class="topbar-meta">{layout} layout</span></div>',
+    unsafe_allow_html=True,
+)
+
+# --- Hero ---
+st.markdown(
+    """
+    <div class="hero">
+      <div class="hero-kicker"><span class="dot"></span> Grounded kitchen AI</div>
+      <p class="hero-brand">ChefBot AI</p>
+      <p class="hero-sub">
+        Tell us what's in your fridge. We'll stream a grounded, allergen-aware
+        recipe from real cookbook context - not invented pantry magic.
+      </p>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
+
+# --- Quick starts (2x2 so labels stay readable on phones) ---
+if st.session_state.get("show_starters", True):
+    st.markdown('<div class="quick-label">Try a starter</div>', unsafe_allow_html=True)
+    starter_items = list(QUICK_STARTS.items())
+    for row_start in range(0, len(starter_items), 2):
+        row = starter_items[row_start : row_start + 2]
+        chip_cols = st.columns(2)
+        for col, (label, ingredients) in zip(chip_cols, row):
+            with col:
+                if st.button(label, key=f"chip_{label}", use_container_width=True):
+                    st.session_state["inventory_input"] = ingredients
+                    st.rerun()
+
+# --- Form ---
+with st.form("recipe_form", clear_on_submit=False):
+    inventory_raw = st.text_area(
+        "What's in the fridge?",
+        placeholder="chicken, garlic, tomatoes, rice, olive oil",
+        help="Comma-separated ingredients you have on hand.",
+        height=118,
+        key="inventory_input",
+    )
+    dietary_choices = st.multiselect(
+        "Allergies & diets",
+        options=DIET_OPTIONS,
+        help="Treated as hard constraints.",
+        key="diet_input",
+    )
+    submitted = st.form_submit_button("Generate recipe")
+
+# --- Force regenerate from sidebar ---
+if st.session_state.pop("force_regenerate", False) and st.session_state.get("last_payload"):
+    generate_and_render(st.session_state["last_payload"])
+
+# --- Results ---
+elif submitted:
     inventory = parse_inventory(inventory_raw)
     if not inventory:
-        st.error("Add at least one inventory item (comma-separated).")
+        st.error("Add at least one ingredient so we know what we're cooking with.")
         st.stop()
 
     payload = {
         "inventory": inventory,
         "dietary_choices": ", ".join(dietary_choices) if dietary_choices else "",
-        "limit": 5,
+        "limit": int(st.session_state.get("result_limit", 5)),
     }
+    generate_and_render(payload)
 
-    st.subheader("Your recipe")
-    status = st.status(f"Contacting ChefBot at `{GENERATE_URL}`...", expanded=False)
+elif st.session_state.get("last_recipe") and st.session_state.get("show_feedback"):
+    st.markdown(
+        '<div class="section-head"><p class="section-label">Your plate</p></div>',
+        unsafe_allow_html=True,
+    )
+    render_recipe(st.session_state["last_recipe"])
 
-    try:
-        try:
-            recipe_text = st.write_stream(stream_recipe_async(payload))
-        except TypeError:
-            recipe_text = st.write_stream(stream_recipe(payload))
-        status.update(label="Recipe ready", state="complete")
-        st.session_state["last_recipe"] = recipe_text or ""
-        st.session_state["last_payload"] = payload
-        st.session_state["show_feedback"] = True
-    except Exception as exc:  # noqa: BLE001 - show friendly UI errors
-        status.update(label="Generation failed", state="error")
-        message = str(exc)
-        if "429" in message or "RESOURCE_EXHAUSTED" in message or "quota" in message.lower():
-            st.error(
-                "Gemini free-tier embedding quota is exhausted. "
-                "Wait for the quota reset (often ~1 day for the daily limit), "
-                "or upgrade billing. The API will automatically fall back to "
-                "ingredient-only search after a backend reload."
-            )
-            st.code(message, language="text")
-        elif "connect" in message.lower() or "refused" in message.lower():
-            st.error(
-                f"Could not reach the recipe API at `{GENERATE_URL}`. "
-                "Set Streamlit secret CHEFBOT_API_URL to your Vercel backend URL.\n\n"
-                f"`{message}`"
-            )
-        else:
-            st.error(f"Recipe generation failed.\n\n`{message}`")
-        st.session_state["show_feedback"] = False
+just_generated = bool(
+    st.session_state.get("last_recipe") and st.session_state.get("show_feedback")
+)
+if just_generated:
+    st.download_button(
+        "Download recipe",
+        data=st.session_state["last_recipe"],
+        file_name="chefbot-recipe.md",
+        mime="text/markdown",
+        use_container_width=True,
+    )
+    action_cols = st.columns(2)
+    with action_cols[0]:
+        if st.button("Regenerate", use_container_width=True) and st.session_state.get(
+            "last_payload"
+        ):
+            st.session_state["force_regenerate"] = True
+            st.rerun()
+    with action_cols[1]:
+        if st.button("New plate", key="new_plate_main", use_container_width=True):
+            st.session_state["last_recipe"] = ""
+            st.session_state["show_feedback"] = False
+            st.rerun()
+elif not submitted:
+    st.markdown(
+        """
+        <div class="empty-stage">
+          <h3>Your next plate starts here</h3>
+          <p>
+            Add a few fridge staples, set any diet constraints, then generate.
+            Use the sidebar menu for layout, text size, and recent plates.
+          </p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 if st.session_state.get("show_feedback") and st.session_state.get("last_recipe"):
-    st.divider()
-    st.markdown("### How was this recipe?")
+    st.markdown('<div class="feedback-wrap">', unsafe_allow_html=True)
+    st.markdown("#### How was it?")
+    st.caption("A quick thumbs-up or down helps improve future plates.")
     feedback = st.feedback("thumbs", key="recipe_feedback")
     if feedback is not None:
         label = "thumbs_up" if feedback == 1 else "thumbs_down"
@@ -189,11 +830,14 @@ if st.session_state.get("show_feedback") and st.session_state.get("last_recipe")
         if transaction_id:
             try:
                 post_feedback(transaction_id, label)
-                st.success(f"Thanks - recorded **{label.replace('_', ' ')}** in monitoring.")
-            except Exception as exc:  # noqa: BLE001
-                st.warning(
-                    f"Feedback saved locally, but monitoring API update failed: `{exc}`"
-                )
+                st.success("Thanks - feedback saved.")
+            except Exception:
+                st.success("Thanks - feedback noted for this session.")
         else:
-            st.success(f"Thanks - recorded **{label.replace('_', ' ')}**.")
-            st.caption("No transaction id returned by the API; DB feedback was skipped.")
+            st.success("Thanks - feedback noted for this session.")
+    st.markdown("</div>", unsafe_allow_html=True)
+
+st.markdown(
+    '<p class="foot">ChefBot AI · grounded recipes · allergen-aware · preferences in the sidebar</p>',
+    unsafe_allow_html=True,
+)
