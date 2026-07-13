@@ -12,6 +12,7 @@ from typing import Any
 
 import httpx
 import streamlit as st
+import streamlit.components.v1 as components
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -284,6 +285,14 @@ div[data-testid="stAlert"] { border-radius: 14px !important; }
 .pref-hint {
   font-size: 0.78rem; color: var(--muted); margin: 0.15rem 0 0.85rem 0; line-height: 1.4;
 }
+/* Hide the swipe-helper iframe so it does not add layout space */
+iframe[height="0"], iframe[height="0"][width="0"] {
+  display: none !important;
+  position: absolute !important;
+  width: 0 !important;
+  height: 0 !important;
+  border: 0 !important;
+}
 
 
 /* Mobile-first refinements */
@@ -393,6 +402,26 @@ div[data-testid="stAlert"] { border-radius: 14px !important; }
   [data-testid="stSidebar"][aria-expanded="true"] ~ div [data-testid="stMain"] {
     pointer-events: none !important;
   }
+
+  /* Left-edge cue: swipe right from here to open the menu */
+  .stApp::before {
+    content: "";
+    position: fixed;
+    left: 0;
+    top: 42%;
+    width: 5px;
+    height: 72px;
+    border-radius: 0 6px 6px 0;
+    background: linear-gradient(180deg, transparent, var(--accent), transparent);
+    opacity: 0.55;
+    z-index: 999998;
+    pointer-events: none;
+    box-shadow: 0 0 12px var(--accent-glow);
+  }
+  [data-testid="stSidebar"][aria-expanded="true"] ~ * .stApp::before,
+  body:has([data-testid="stSidebar"][aria-expanded="true"]) .stApp::before {
+    opacity: 0;
+  }
 }
 
 @media (max-width: 420px) {
@@ -479,6 +508,104 @@ def init_preferences() -> None:
     st.session_state.pop("theme_mode", None)
     if st.session_state.pop("compact_mode", None):
         st.session_state["layout_density"] = "Compact"
+
+
+def inject_sidebar_swipe() -> None:
+    """Mobile swipe: right from left edge opens sidebar; left swipe closes it."""
+    components.html(
+        """
+<script>
+(function () {
+  const win = window.parent;
+  const doc = win.document;
+  if (win.__chefbotSwipeBound) return;
+  win.__chefbotSwipeBound = true;
+
+  const EDGE_PX = 56;
+  const MIN_DX = 55;
+  const MOBILE_MAX = 900;
+
+  function isMobile() {
+    return win.innerWidth <= MOBILE_MAX;
+  }
+
+  function sidebarExpanded() {
+    const sb = doc.querySelector('[data-testid="stSidebar"]');
+    return !!(sb && sb.getAttribute("aria-expanded") === "true");
+  }
+
+  function clickExpand() {
+    const btn =
+      doc.querySelector('[data-testid="stExpandSidebarButton"]') ||
+      doc.querySelector('button[kind="header"]') ||
+      doc.querySelector('[data-testid="stBaseButton-header"]');
+    if (btn) btn.click();
+  }
+
+  function clickCollapse() {
+    const collapse =
+      doc.querySelector('[data-testid="stSidebarCollapseButton"] button') ||
+      doc.querySelector('[data-testid="stSidebarCollapseButton"]') ||
+      doc.querySelector('[data-testid="stBaseButton-headerNoPadding"]');
+    if (collapse) collapse.click();
+  }
+
+  let startX = 0;
+  let startY = 0;
+  let tracking = false;
+  let fromEdge = false;
+  let fromSidebar = false;
+
+  doc.addEventListener(
+    "touchstart",
+    function (e) {
+      if (!isMobile() || e.touches.length !== 1) return;
+      const t = e.touches[0];
+      const target = e.target;
+      startX = t.clientX;
+      startY = t.clientY;
+      tracking = true;
+      fromEdge = startX <= EDGE_PX;
+      const sb = doc.querySelector('[data-testid="stSidebar"]');
+      fromSidebar = !!(sb && sb.contains(target));
+    },
+    { passive: true }
+  );
+
+  doc.addEventListener(
+    "touchend",
+    function (e) {
+      if (!tracking || !isMobile()) {
+        tracking = false;
+        return;
+      }
+      tracking = false;
+      const t = e.changedTouches[0];
+      const dx = t.clientX - startX;
+      const dy = t.clientY - startY;
+      if (Math.abs(dx) < MIN_DX || Math.abs(dx) < Math.abs(dy) * 1.15) return;
+
+      const open = sidebarExpanded();
+
+      // Swipe right from the left edge (sidebar side) -> open
+      if (!open && dx > MIN_DX && fromEdge) {
+        clickExpand();
+        return;
+      }
+
+      // Swipe left while open (especially on drawer) -> close
+      if (open && dx < -MIN_DX && (fromSidebar || startX < win.innerWidth * 0.9)) {
+        clickCollapse();
+      }
+    },
+    { passive: true }
+  );
+})();
+</script>
+        """,
+        height=0,
+        width=0,
+    )
 
 
 def parse_inventory(raw: str) -> list[str]:
@@ -642,12 +769,13 @@ st.markdown(
     f"<style>{DARK_THEME_CSS}{SHARED_CSS}{layout_css}{type_css}{motion_css}</style>",
     unsafe_allow_html=True,
 )
+inject_sidebar_swipe()
 
 # --- Sidebar: preferences & history ---
 with st.sidebar:
     st.markdown("### Experience")
     st.markdown(
-        '<p class="pref-hint">Preferences stay for this browser session.</p>',
+        '<p class="pref-hint">On mobile, swipe right from the left edge to open this menu; swipe left to close.</p>',
         unsafe_allow_html=True,
     )
     st.selectbox(
