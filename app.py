@@ -269,13 +269,22 @@ label p, [data-testid="stWidgetLabel"] p {
 [data-testid="stCaption"] { color: var(--muted) !important; }
 div[data-testid="stAlert"] { border-radius: 14px !important; }
 [data-testid="stSidebar"] {
-  background: var(--panel) !important;
+  /* Solid fill so main content never shows through the drawer */
+  background: #101612 !important;
+  background-color: #101612 !important;
   border-right: 1px solid var(--line) !important;
+  z-index: 1000002 !important;
+}
+[data-testid="stSidebar"] > div,
+[data-testid="stSidebarContent"],
+[data-testid="stSidebarUserContent"] {
+  background-color: transparent !important;
 }
 [data-testid="stSidebar"] * { color: var(--text); }
 .pref-hint {
   font-size: 0.78rem; color: var(--muted); margin: 0.15rem 0 0.85rem 0; line-height: 1.4;
 }
+
 
 /* Mobile-first refinements */
 @media (max-width: 768px) {
@@ -368,10 +377,21 @@ div[data-testid="stAlert"] { border-radius: 14px !important; }
 
   [data-testid="stSidebar"] {
     border-right: none !important;
+    width: min(20rem, 88vw) !important;
+  }
+  [data-testid="stSidebar"][aria-expanded="true"] {
+    box-shadow:
+      8px 0 40px rgba(0, 0, 0, 0.55),
+      0 0 0 100vmax rgba(6, 10, 8, 0.82) !important;
   }
   [data-testid="stSidebar"] .block-container {
     padding-left: 1rem !important;
     padding-right: 1rem !important;
+  }
+  /* Soften interaction with content under the scrim */
+  [data-testid="stSidebar"][aria-expanded="true"] ~ section[data-testid="stMain"],
+  [data-testid="stSidebar"][aria-expanded="true"] ~ div [data-testid="stMain"] {
+    pointer-events: none !important;
   }
 }
 
