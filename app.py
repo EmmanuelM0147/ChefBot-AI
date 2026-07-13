@@ -397,11 +397,6 @@ iframe[height="0"], iframe[height="0"][width="0"] {
     padding-left: 1rem !important;
     padding-right: 1rem !important;
   }
-  /* Soften interaction with content under the scrim */
-  [data-testid="stSidebar"][aria-expanded="true"] ~ section[data-testid="stMain"],
-  [data-testid="stSidebar"][aria-expanded="true"] ~ div [data-testid="stMain"] {
-    pointer-events: none !important;
-  }
 
   /* Left-edge cue: swipe right from here to open the menu */
   .stApp::before {
@@ -417,10 +412,6 @@ iframe[height="0"], iframe[height="0"][width="0"] {
     z-index: 999998;
     pointer-events: none;
     box-shadow: 0 0 12px var(--accent-glow);
-  }
-  [data-testid="stSidebar"][aria-expanded="true"] ~ * .stApp::before,
-  body:has([data-testid="stSidebar"][aria-expanded="true"]) .stApp::before {
-    opacity: 0;
   }
 }
 
@@ -642,26 +633,43 @@ def friendly_error(exc: Exception) -> str:
     lowered = message.lower()
     if "429" in message or "resource_exhausted" in lowered or "quota" in lowered:
         return "The kitchen is at capacity right now. Give it a minute and try again."
-    if "connect" in lowered or "refused" in lowered or "timed out" in lowered:
+    if "connect" in lowered or "refused" in lowered or "timed out" in lowered or "timeout" in lowered:
         return "We couldn't reach the recipe service. Please try again in a moment."
     if "502" in message or "retrieval failed" in lowered:
         return "Recipe search is temporarily unavailable. Please try again shortly."
+    if "422" in message:
+        return "Add at least one ingredient so we know what we're cooking with."
     return "Something went wrong while generating your recipe. Please try again."
 
 
 def stream_recipe(payload: dict[str, Any]) -> Iterator[str]:
-    timeout = httpx.Timeout(connect=20.0, read=None, write=60.0, pool=20.0)
-    with httpx.Client(timeout=timeout) as client:
-        with client.stream("POST", GENERATE_URL, json=payload) as response:
-            if response.status_code >= 400:
-                body = response.read().decode("utf-8", errors="replace")
-                raise RuntimeError(f"API error {response.status_code}: {body}")
-            transaction_id = response.headers.get("X-Transaction-Id")
-            if transaction_id:
-                st.session_state["last_transaction_id"] = transaction_id
-            for chunk in response.iter_text():
-                if chunk:
-                    yield chunk
+    timeout = httpx.Timeout(connect=20.0, read=120.0, write=60.0, pool=20.0)
+    last_error: Exception | None = None
+    for attempt in range(2):
+        try:
+            with httpx.Client(timeout=timeout, follow_redirects=True) as client:
+                with client.stream("POST", GENERATE_URL, json=payload) as response:
+                    if response.status_code >= 400:
+                        body = response.read().decode("utf-8", errors="replace")
+                        raise RuntimeError(f"API error {response.status_code}: {body}")
+                    transaction_id = response.headers.get("X-Transaction-Id")
+                    if transaction_id:
+                        st.session_state["last_transaction_id"] = transaction_id
+                    yielded = False
+                    for chunk in response.iter_text():
+                        if chunk:
+                            yielded = True
+                            yield chunk
+                    if not yielded:
+                        raise RuntimeError("API returned an empty recipe stream.")
+                    return
+        except (httpx.TimeoutException, httpx.TransportError) as exc:
+            last_error = exc
+            if attempt == 0:
+                continue
+            raise RuntimeError(f"Recipe service connection failed: {exc}") from exc
+    if last_error:
+        raise RuntimeError(f"Recipe service connection failed: {last_error}") from last_error
 
 
 def post_feedback(transaction_id: str, feedback: str) -> None:
@@ -745,6 +753,8 @@ def generate_and_render(payload: dict[str, Any]) -> None:
     except Exception as exc:  # noqa: BLE001
         status.update(label="Couldn't finish this plate", state="error")
         st.error(friendly_error(exc))
+        with st.expander("Technical details"):
+            st.code(str(exc), language="text")
         st.session_state["show_feedback"] = False
 
 

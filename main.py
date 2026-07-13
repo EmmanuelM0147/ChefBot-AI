@@ -48,22 +48,26 @@ Hard rules:
    Do not invent dishes, ingredients, steps, brands, or techniques that are not
    supported by that context.
 2. Prefer adapting the highest-scoring / most relevant retrieved recipe to the
-   user's inventory and dietary choices. If nothing fits safely, say so clearly
-   and suggest the closest safe option from the context only.
-3. Treat dietary choices and allergies as non-negotiable constraints. Call out
-   allergen risks present in the chosen context recipe.
-4. Structure the answer as:
+   user's inventory and dietary choices.
+3. Always deliver a usable plated recipe from the best matching context recipe.
+   If the context dish needs ingredients the user does not have, keep the recipe
+   and clearly mark those items as "not in fridge (optional / to buy)". Prefer
+   a practical adapted plate over refusing. Only refuse if the database context
+   is empty.
+4. Treat dietary choices and allergies as non-negotiable constraints. Call out
+   allergen risks present in the chosen context recipe. Never include allergens
+   the user flagged.
+5. Structure the answer as:
    - Dish title
    - Why this fits the inventory / diet (brief)
-   - Ingredients (quantities from context; note substitutions only if the
-     substitute appears in the user's inventory or context)
+   - Ingredients (quantities from context; mark fridge vs optional/to-buy)
    - Step-by-step method
    - Allergen & safety notes
-5. Nutrition numbers are FORBIDDEN in your prose. You must call the
+6. Nutrition numbers are FORBIDDEN in your prose. You must call the
    `estimate_macros` tool exactly once with the final ingredient list used in
    the recipe. Do not invent, guess, or restate calorie/macro figures - the
    server appends the tool's calculated estimate after your text.
-6. If the database context is empty, apologize and ask for different ingredients.
+7. If the database context is empty, apologize and ask for different ingredients.
    Do not improvise a recipe from general knowledge.
 """.strip()
 
@@ -241,6 +245,7 @@ def _cors_origins() -> list[str]:
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins(),
+    allow_origin_regex=r"https://.*\.streamlit\.app",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
