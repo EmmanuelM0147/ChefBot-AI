@@ -14,9 +14,33 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-API_BASE_URL = os.getenv("CHEFBOT_API_URL", "http://localhost:8000").strip().strip('"')
-GENERATE_URL = f"{API_BASE_URL.rstrip('/')}/api/generate-recipe"
-FEEDBACK_URL = f"{API_BASE_URL.rstrip('/')}/api/feedback"
+
+def resolve_api_base_url() -> str:
+    """
+    Prefer Streamlit Cloud secrets, then env, then deployed Vercel API.
+
+    On Streamlit Community Cloud set (or rely on the default below):
+      CHEFBOT_API_URL = "https://chef-bot-ai-one.vercel.app"
+    """
+    try:
+        secret_url = st.secrets.get("CHEFBOT_API_URL")  # type: ignore[attr-defined]
+        if secret_url:
+            return str(secret_url).strip().strip('"').rstrip("/")
+    except Exception:
+        # secrets.toml may be absent in local/dev runs
+        pass
+
+    return (
+        os.getenv("CHEFBOT_API_URL", "https://chef-bot-ai-one.vercel.app")
+        .strip()
+        .strip('"')
+        .rstrip("/")
+    )
+
+
+API_BASE_URL = resolve_api_base_url()
+GENERATE_URL = f"{API_BASE_URL}/api/generate-recipe"
+FEEDBACK_URL = f"{API_BASE_URL}/api/feedback"
 
 DIET_OPTIONS = [
     "Vegetarian",
@@ -42,7 +66,8 @@ st.set_page_config(
 )
 
 st.title("ChefBot AI")
-st.caption("Tell us what’s in your fridge - get a grounded, streamed recipe.")
+st.caption("Tell us what's in your fridge - get a grounded, streamed recipe.")
+st.caption(f"API: `{API_BASE_URL}`")
 
 with st.form("recipe_form", clear_on_submit=False):
     inventory_raw = st.text_area(
@@ -65,7 +90,7 @@ def parse_inventory(raw: str) -> list[str]:
 
 async def stream_recipe_async(payload: dict[str, Any]) -> AsyncIterator[str]:
     """Async POST to FastAPI and yield response text chunk-by-chunk."""
-    timeout = httpx.Timeout(connect=10.0, read=None, write=30.0, pool=10.0)
+    timeout = httpx.Timeout(connect=20.0, read=None, write=60.0, pool=20.0)
     async with httpx.AsyncClient(timeout=timeout) as client:
         async with client.stream("POST", GENERATE_URL, json=payload) as response:
             if response.status_code >= 400:
@@ -85,7 +110,7 @@ async def stream_recipe_async(payload: dict[str, Any]) -> AsyncIterator[str]:
 
 def stream_recipe(payload: dict[str, Any]) -> Iterator[str]:
     """Sync bridge for st.write_stream with transaction-id capture."""
-    timeout = httpx.Timeout(connect=10.0, read=None, write=30.0, pool=10.0)
+    timeout = httpx.Timeout(connect=20.0, read=None, write=60.0, pool=20.0)
     with httpx.Client(timeout=timeout) as client:
         with client.stream("POST", GENERATE_URL, json=payload) as response:
             if response.status_code >= 400:
@@ -103,7 +128,7 @@ def post_feedback(transaction_id: str, feedback: str) -> None:
     response = httpx.post(
         FEEDBACK_URL,
         json={"transaction_id": transaction_id, "feedback": feedback},
-        timeout=10.0,
+        timeout=20.0,
     )
     response.raise_for_status()
 
@@ -121,7 +146,7 @@ if submitted:
     }
 
     st.subheader("Your recipe")
-    status = st.status(f"Contacting ChefBot at `{GENERATE_URL}`…", expanded=False)
+    status = st.status(f"Contacting ChefBot at `{GENERATE_URL}`...", expanded=False)
 
     try:
         try:
@@ -146,7 +171,7 @@ if submitted:
         elif "connect" in message.lower() or "refused" in message.lower():
             st.error(
                 f"Could not reach the recipe API at `{GENERATE_URL}`. "
-                "Is FastAPI running?\n\n"
+                "Set Streamlit secret CHEFBOT_API_URL to your Vercel backend URL.\n\n"
                 f"`{message}`"
             )
         else:

@@ -133,6 +133,21 @@ docker compose up -d
 python -u monitor.py   # optional smoke test: creates table + sample row
 ```
 
+### LLM-as-a-judge (offline)
+
+`evaluate.py` scores logged answers with Gemini on relevance, groundedness, and safety, then stores rows in `chefbot_evaluations`.
+
+Run from the **project root** (the folder that contains `main.py` / `.env`):
+
+```bash
+cd "C:\Users\pc\Desktop\ChefBot AI"
+.\.venv\Scripts\Activate.ps1
+python -u evaluate.py --limit 20
+```
+
+- Default: only unevaluated `ok` interactions
+- Re-judge everything in the batch: `python -u evaluate.py --limit 50 --all`
+
 ---
 
 ## Repository layout
@@ -144,6 +159,7 @@ ChefBot AI/
 |-- retrieval.py        # Async Qdrant search + Gemini embeddings (+ fallback)
 |-- ingest.py           # Batch embed + upsert into chefbot_recipes
 |-- monitor.py          # PostgreSQL interaction logging
+|-- evaluate.py         # Offline LLM-as-a-judge over logged interactions
 |-- dataset/
 |   |-- recipes.json    # Primary structured dataset (JSONL)
 |   `-- recipes.csv     # Optional tabular twin (not used at runtime)
@@ -181,8 +197,33 @@ DATABASE_URL="postgresql://user:password@localhost:5433/chefbot_monitoring"
 |---|---|
 | `GEMINI_API_KEY` | Embeddings + Gemini 2.5 Flash generation |
 | `QDRANT_URL` / `QDRANT_API_KEY` | Vector store for `chefbot_recipes` |
-| `CHEFBOT_API_URL` | Streamlit -> FastAPI base URL |
+| `CHEFBOT_API_URL` | Streamlit -> FastAPI base URL (local or Vercel) |
 | `DATABASE_URL` | Monitoring DB (`docker compose` maps Postgres to `localhost:5433`) |
+| `CORS_ORIGINS` | Comma-separated browser origins allowed by FastAPI CORS |
+
+---
+
+## Remote fullstack (Streamlit Cloud + Vercel)
+
+1. **Backend (Vercel)**
+   - Deploy this repo (Vercel detects `main.py` FastAPI `app`).
+   - Set env vars in Vercel: `GEMINI_API_KEY`, `QDRANT_URL`, `QDRANT_API_KEY`, `DATABASE_URL` (optional), `CORS_ORIGINS`.
+   - Recommended `CORS_ORIGINS`:
+     `https://chefbot-ai-9v272ty2jahksxappfpvhqg.streamlit.app,http://localhost:8501`
+   - `vercel.json` sets `maxDuration: 60` for long recipe streams.
+
+2. **Frontend (Streamlit Community Cloud)**
+   - App: https://chefbot-ai-9v272ty2jahksxappfpvhqg.streamlit.app/
+   - Backend: https://chef-bot-ai-one.vercel.app/
+   - In **App settings -> Secrets**, set:
+     ```toml
+     CHEFBOT_API_URL = "https://chef-bot-ai-one.vercel.app"
+     ```
+   - Redeploy / reboot the Streamlit app after saving secrets.
+
+3. **Note on CORS**
+   - Streamlit Cloud calls your API from Python (`httpx`) on Streamlit's servers (server-to-server), so CORS is not always required for that path.
+   - CORS is still configured so browser clients, previews, and future web UIs can call the Vercel API safely from the Streamlit origin.
 
 ---
 

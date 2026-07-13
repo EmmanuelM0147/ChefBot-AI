@@ -34,3 +34,7 @@ dataset/*.zip
 *.log
 *.tmp
 .cache/
+
+# Streamlit local secrets (keep example tracked)
+.streamlit/secrets.toml
+!.streamlit/secrets.toml.example

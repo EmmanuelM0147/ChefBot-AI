@@ -13,6 +13,7 @@ from typing import Any, AsyncIterator, Iterator, Literal
 
 from dotenv import load_dotenv
 from fastapi import BackgroundTasks, FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from google import genai
 from google.genai import types
@@ -30,6 +31,13 @@ load_dotenv()
 
 GENERATION_MODEL = "gemini-2.5-flash"
 APP_TITLE = "ChefBot AI"
+
+# Streamlit Cloud frontend + local dev defaults.
+DEFAULT_CORS_ORIGINS = (
+    "https://chefbot-ai-9v272ty2jahksxappfpvhqg.streamlit.app,"
+    "http://localhost:8501,"
+    "http://127.0.0.1:8501"
+)
 
 SYSTEM_PROMPT = """
 You are ChefBot - a Michelin-star chef who is obsessively allergen-safe and
@@ -216,6 +224,28 @@ app = FastAPI(title=APP_TITLE, version="1.0.0", lifespan=lifespan)
 def _env(name: str, default: str = "") -> str:
     return os.getenv(name, default).strip().strip('"')
 
+
+def _cors_origins() -> list[str]:
+    raw = _env("CORS_ORIGINS", DEFAULT_CORS_ORIGINS)
+    origins = [origin.strip() for origin in raw.split(",") if origin.strip()]
+    # Deduplicate while preserving order.
+    seen: set[str] = set()
+    unique: list[str] = []
+    for origin in origins:
+        if origin not in seen:
+            seen.add(origin)
+            unique.append(origin)
+    return unique
+
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_cors_origins(),
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+    expose_headers=["X-Transaction-Id"],
+)
 
 @lru_cache(maxsize=1)
 def get_genai_client() -> genai.Client:
