@@ -5,11 +5,12 @@ and append tool-calculated macro estimates (never model-invented nutrition).
 
 from __future__ import annotations
 
+import asyncio
 import os
 import time
 from contextlib import asynccontextmanager
 from functools import lru_cache
-from typing import Any, AsyncIterator, Iterator, Literal
+from typing import Any, AsyncIterator, Literal
 
 from dotenv import load_dotenv
 from fastapi import BackgroundTasks, FastAPI, HTTPException
@@ -346,12 +347,12 @@ def _ingredient_list_for_macros(
     return [str(item) for item in inventory]
 
 
-def _call_genai_with_retry(operation: str, fn: Any) -> Any:
-    """Retry sync Gemini calls on transient rate limits (not daily quota)."""
+async def _call_genai_with_retry(operation: str, awaitable_factory: Any) -> Any:
+    """Retry async Gemini calls on transient rate limits (not daily quota)."""
     last_error: BaseException | None = None
     for attempt in range(1, MAX_GENERATION_RETRIES + 1):
         try:
-            return fn()
+            return await awaitable_factory()
         except Exception as exc:  # noqa: BLE001
             last_error = exc
             if not is_quota_error(exc) or is_daily_quota(exc):
@@ -361,17 +362,17 @@ def _call_genai_with_retry(operation: str, fn: Any) -> Any:
                 f"[chefbot] {operation} rate-limited "
                 f"(attempt {attempt}/{MAX_GENERATION_RETRIES}); sleeping {wait:.1f}s"
             )
-            time.sleep(wait)
+            await asyncio.sleep(wait)
     assert last_error is not None
     raise last_error
 
 
-def _iter_genai_stream_with_retry(
+async def _aiter_genai_stream_with_retry(
     operation: str,
     make_stream: Any,
-) -> Iterator[types.GenerateContentResponse]:
+) -> AsyncIterator[types.GenerateContentResponse]:
     """
-    Retry stream creation on 429 before any chunks are yielded.
+    Retry async stream creation on 429 before any chunks are yielded.
 
     Once a chunk has been yielded, failures propagate (avoids duplicated text).
     """
@@ -379,8 +380,8 @@ def _iter_genai_stream_with_retry(
     for attempt in range(1, MAX_GENERATION_RETRIES + 1):
         started_yielding = False
         try:
-            stream = make_stream()
-            for chunk in stream:
+            stream = await make_stream()
+            async for chunk in stream:
                 started_yielding = True
                 yield chunk
             return
@@ -393,34 +394,35 @@ def _iter_genai_stream_with_retry(
                 f"[chefbot] {operation} rate-limited "
                 f"(attempt {attempt}/{MAX_GENERATION_RETRIES}); sleeping {wait:.1f}s"
             )
-            time.sleep(wait)
+            await asyncio.sleep(wait)
     assert last_error is not None
     raise last_error
 
 
-def stream_recipe_response(
+async def stream_recipe_response(
     inventory: list[str],
     dietary_choices: str,
     recipes: list[RecipeResult],
-) -> Iterator[str]:
+) -> AsyncIterator[str]:
     """
-    Sync generator using client.models.generate_content_stream as required.
+    Async generator using client.aio.models.generate_content_stream.
 
     Passes the hardcoded `estimate_macros` Python tool into Gemini function
     calling, then appends the tool's calculated macros to the streamed text so
     nutrition figures never come from model hallucination.
 
     Transient Gemini 429s are retried with hint-aware backoff before any text
-    is sent to the client.
+    is sent to the client. Runs fully async so FastAPI can serve concurrent
+    recipe streams without blocking the event loop on sync SDK I/O.
     """
     client = get_genai_client()
     prompt = build_user_prompt(inventory, dietary_choices, recipes)
     collected_calls: list[types.FunctionCall] = []
     yielded_text = False
 
-    stream = _iter_genai_stream_with_retry(
+    stream = _aiter_genai_stream_with_retry(
         "generate_content_stream",
-        lambda: client.models.generate_content_stream(
+        lambda: client.aio.models.generate_content_stream(
             model=GENERATION_MODEL,
             contents=prompt,
             config=types.GenerateContentConfig(
@@ -441,7 +443,7 @@ def stream_recipe_response(
         ),
     )
 
-    for chunk in stream:
+    async for chunk in stream:
         collected_calls.extend(_extract_function_calls(chunk))
         text = chunk.text
         if text:
@@ -451,9 +453,9 @@ def stream_recipe_response(
     # If the model only emitted a function call, stream a tool-free narrative
     # pass so the client still receives a real-time recipe.
     if not yielded_text:
-        narrative_stream = _iter_genai_stream_with_retry(
+        narrative_stream = _aiter_genai_stream_with_retry(
             "narrative_stream",
-            lambda: client.models.generate_content_stream(
+            lambda: client.aio.models.generate_content_stream(
                 model=GENERATION_MODEL,
                 contents=(
                     f"{prompt}\n\n"
@@ -466,7 +468,7 @@ def stream_recipe_response(
                 ),
             ),
         )
-        for chunk in narrative_stream:
+        async for chunk in narrative_stream:
             text = chunk.text
             if text:
                 yield text
@@ -474,9 +476,9 @@ def stream_recipe_response(
     tool_invoked = any(call.name == "estimate_macros" for call in collected_calls)
     if not tool_invoked:
         # Force Gemini function calling against the hardcoded Python tool.
-        forced = _call_genai_with_retry(
+        forced = await _call_genai_with_retry(
             "estimate_macros_force",
-            lambda: client.models.generate_content(
+            lambda: client.aio.models.generate_content(
                 model=GENERATION_MODEL,
                 contents=[
                     types.Content(role="user", parts=[types.Part(text=prompt)]),
@@ -575,12 +577,11 @@ async def generate_recipe(
     async def event_stream() -> AsyncIterator[str]:
         chunks: list[str] = []
         try:
-            iterator = stream_recipe_response(
+            async for piece in stream_recipe_response(
                 inventory=inventory,
                 dietary_choices=body.dietary_choices,
                 recipes=recipes,
-            )
-            for piece in iterator:
+            ):
                 chunks.append(piece)
                 yield piece
             monitor_state["status"] = "ok"
