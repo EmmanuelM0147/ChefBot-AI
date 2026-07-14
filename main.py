@@ -21,6 +21,7 @@ from google.genai import types
 from pydantic import BaseModel, Field
 
 from monitor import (
+    close_pool,
     init_monitoring_table,
     new_transaction_id,
     save_interaction_safe,
@@ -232,6 +233,7 @@ async def lifespan(_app: FastAPI):
         yield
     finally:
         await close_qdrant_client()
+        close_pool()
 
 
 app = FastAPI(title=APP_TITLE, version="1.0.0", lifespan=lifespan)

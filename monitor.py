@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Any, Generator, Literal
@@ -21,6 +22,15 @@ load_dotenv()
 logger = logging.getLogger("chefbot.monitor")
 
 FeedbackValue = Literal["thumbs_up", "thumbs_down"] | None
+
+# Small pool: monitoring is write-light and must not starve the API workers.
+POOL_MIN_SIZE = 1
+POOL_MAX_SIZE = 5
+POOL_TIMEOUT_SECONDS = 10.0
+CONNECT_TIMEOUT_SECONDS = 5
+MAX_CONNECT_RETRIES = 2
+
+_POOL: Any | None = None
 
 CREATE_TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS chefbot_interactions (
@@ -50,16 +60,82 @@ def get_database_url() -> str:
     return os.getenv("DATABASE_URL", "").strip().strip('"')
 
 
-@contextmanager
-def get_connection() -> Generator[Any, None, None]:
-    """Open a short-lived psycopg connection (Zoomcamp-style per-request connect)."""
-    import psycopg
+def get_pool() -> Any:
+    """Lazy process-wide psycopg ConnectionPool."""
+    global _POOL
+    if _POOL is not None:
+        return _POOL
+
+    from psycopg_pool import ConnectionPool
 
     database_url = get_database_url()
     if not database_url:
         raise RuntimeError("DATABASE_URL is not configured in .env")
 
-    conn = psycopg.connect(database_url, connect_timeout=5)
+    _POOL = ConnectionPool(
+        conninfo=database_url,
+        min_size=POOL_MIN_SIZE,
+        max_size=POOL_MAX_SIZE,
+        timeout=POOL_TIMEOUT_SECONDS,
+        kwargs={"connect_timeout": CONNECT_TIMEOUT_SECONDS},
+        open=True,
+        name="chefbot-monitoring",
+    )
+    logger.info(
+        "Monitoring DB pool ready (min=%s max=%s)",
+        POOL_MIN_SIZE,
+        POOL_MAX_SIZE,
+    )
+    return _POOL
+
+
+def close_pool() -> None:
+    """Close the shared pool (call from app lifespan shutdown)."""
+    global _POOL
+    if _POOL is None:
+        return
+    try:
+        _POOL.close()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Error closing monitoring DB pool: %s", exc)
+    finally:
+        _POOL = None
+
+
+def _reset_pool() -> None:
+    """Drop a broken pool so the next acquire recreates it."""
+    close_pool()
+
+
+@contextmanager
+def get_connection() -> Generator[Any, None, None]:
+    """
+    Borrow a pooled connection with one reconnect retry on transient failure.
+    """
+    last_error: BaseException | None = None
+    conn_cm: Any | None = None
+    conn: Any | None = None
+
+    for attempt in range(1, MAX_CONNECT_RETRIES + 1):
+        try:
+            pool = get_pool()
+            conn_cm = pool.connection()
+            conn = conn_cm.__enter__()
+            break
+        except Exception as exc:  # noqa: BLE001
+            last_error = exc
+            logger.warning(
+                "Monitoring DB acquire failed (attempt %s/%s): %s",
+                attempt,
+                MAX_CONNECT_RETRIES,
+                exc,
+            )
+            _reset_pool()
+            if attempt >= MAX_CONNECT_RETRIES:
+                raise
+            time.sleep(0.4 * attempt)
+
+    assert conn is not None and conn_cm is not None
     try:
         yield conn
         conn.commit()
@@ -67,7 +143,7 @@ def get_connection() -> Generator[Any, None, None]:
         conn.rollback()
         raise
     finally:
-        conn.close()
+        conn_cm.__exit__(None, None, None)
 
 
 def init_monitoring_table() -> bool:
@@ -203,17 +279,20 @@ def save_interaction_safe(**kwargs: Any) -> None:
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
-    ok = init_monitoring_table()
-    print("init_monitoring_table:", ok)
-    if ok:
-        tx = log_interaction(
-            user_query="chicken, garlic, tomato",
-            dietary_choices="high protein",
-            best_recipe_id="0",
-            best_recipe_title="Smoke Test Recipe",
-            llm_output="Test output",
-            response_latency_ms=12.3,
-        )
-        print("logged:", tx)
-        if tx:
-            print("feedback:", update_feedback(tx, "thumbs_up"))
+    try:
+        ok = init_monitoring_table()
+        print("init_monitoring_table:", ok)
+        if ok:
+            tx = log_interaction(
+                user_query="chicken, garlic, tomato",
+                dietary_choices="high protein",
+                best_recipe_id="0",
+                best_recipe_title="Smoke Test Recipe",
+                llm_output="Test output",
+                response_latency_ms=12.3,
+            )
+            print("logged:", tx)
+            if tx:
+                print("feedback:", update_feedback(tx, "thumbs_up"))
+    finally:
+        close_pool()

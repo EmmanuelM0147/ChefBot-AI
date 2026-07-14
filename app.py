@@ -644,7 +644,7 @@ def friendly_error(exc: Exception) -> str:
 
 
 def stream_recipe(payload: dict[str, Any]) -> Iterator[str]:
-    timeout = httpx.Timeout(connect=20.0, read=120.0, write=60.0, pool=20.0)
+    timeout = httpx.Timeout(connect=20.0, read=55.0, write=30.0, pool=20.0)
     last_error: Exception | None = None
     for attempt in range(2):
         try:
