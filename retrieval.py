@@ -14,6 +14,8 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import os
+import re
+from collections import OrderedDict
 from functools import lru_cache
 from typing import Any, TypedDict
 
@@ -35,10 +37,12 @@ COLLECTION_NAME = "chefbot_recipes"
 EMBEDDING_MODEL = "gemini-embedding-001"
 VECTOR_SIZE = 768
 MAX_EMBED_RETRIES = 3
+QUERY_VECTOR_CACHE_MAX = 512
 
-# Process-local cache: identical inventory/diet queries skip another embed call.
-_QUERY_VECTOR_CACHE: dict[str, list[float]] = {}
+# Bounded LRU: identical inventory/diet queries skip another embed call.
+_QUERY_VECTOR_CACHE: OrderedDict[str, list[float]] = OrderedDict()
 _CACHE_LOCK = asyncio.Lock()
+_INDEX_ENSURED = False
 
 
 class RecipeResult(TypedDict):
@@ -62,11 +66,22 @@ def _genai_client() -> genai.Client:
     return genai.Client(api_key=api_key)
 
 
-def _qdrant_client() -> AsyncQdrantClient:
+@lru_cache(maxsize=1)
+def get_qdrant_client() -> AsyncQdrantClient:
+    """Process-wide AsyncQdrantClient (reuse across requests)."""
     load_dotenv()
     url = _env("QDRANT_URL", "http://localhost:6333")
     api_key = _env("QDRANT_API_KEY") or None
     return AsyncQdrantClient(url=url, api_key=api_key)
+
+
+async def close_qdrant_client() -> None:
+    """Close the shared client (call from app lifespan shutdown)."""
+    if get_qdrant_client.cache_info().currsize == 0:
+        return
+    client = get_qdrant_client()
+    await client.close()
+    get_qdrant_client.cache_clear()
 
 
 def build_query_context(
@@ -118,6 +133,9 @@ def build_ingredient_filter(user_ingredients: list[str]) -> Filter | None:
 
 async def _ensure_ingredients_text_index(qdrant: AsyncQdrantClient) -> None:
     """Create a text index on ingredients so MatchText payload filters work."""
+    global _INDEX_ENSURED
+    if _INDEX_ENSURED:
+        return
     try:
         await qdrant.create_payload_index(
             collection_name=COLLECTION_NAME,
@@ -135,9 +153,10 @@ async def _ensure_ingredients_text_index(qdrant: AsyncQdrantClient) -> None:
         message = str(exc).lower()
         if "already exists" not in message and "duplicate" not in message:
             raise
+    _INDEX_ENSURED = True
 
 
-def _is_quota_error(exc: BaseException) -> bool:
+def is_quota_error(exc: BaseException) -> bool:
     text = str(exc)
     return (
         isinstance(exc, genai_errors.ClientError)
@@ -145,9 +164,22 @@ def _is_quota_error(exc: BaseException) -> bool:
     ) or "RESOURCE_EXHAUSTED" in text or "429" in text
 
 
-def _is_daily_quota(exc: BaseException) -> bool:
+def is_daily_quota(exc: BaseException) -> bool:
     text = str(exc)
     return "PerDay" in text or "RequestsPerDay" in text
+
+
+def quota_retry_wait_seconds(exc: BaseException, attempt: int) -> float:
+    """Exponential backoff, preferring Gemini's 'Please retry in Xs' hint."""
+    wait_seconds = float(2**attempt)
+    message = str(exc)
+    match = re.search(r"Please retry in\s+([0-9.]+)\s*s", message, flags=re.IGNORECASE)
+    if match:
+        try:
+            wait_seconds = max(wait_seconds, float(match.group(1)) + 1.0)
+        except ValueError:
+            pass
+    return min(wait_seconds, 60.0)
 
 
 def _cache_key(query_text: str) -> str:
@@ -158,8 +190,9 @@ async def embed_query(query_text: str) -> list[float]:
     key = _cache_key(query_text)
     async with _CACHE_LOCK:
         cached = _QUERY_VECTOR_CACHE.get(key)
-    if cached is not None:
-        return cached
+        if cached is not None:
+            _QUERY_VECTOR_CACHE.move_to_end(key)
+            return cached
 
     client = _genai_client()
     last_error: BaseException | None = None
@@ -176,25 +209,17 @@ async def embed_query(query_text: str) -> list[float]:
             vector = list(response.embeddings[0].values)
             async with _CACHE_LOCK:
                 _QUERY_VECTOR_CACHE[key] = vector
+                _QUERY_VECTOR_CACHE.move_to_end(key)
+                while len(_QUERY_VECTOR_CACHE) > QUERY_VECTOR_CACHE_MAX:
+                    _QUERY_VECTOR_CACHE.popitem(last=False)
             return vector
         except Exception as exc:  # noqa: BLE001 - classify quota vs hard failures
             last_error = exc
-            if not _is_quota_error(exc):
+            if not is_quota_error(exc):
                 raise
-            if _is_daily_quota(exc):
+            if is_daily_quota(exc):
                 raise
-            wait_seconds = 2 ** attempt
-            message = str(exc)
-            marker = "Please retry in "
-            if marker in message:
-                try:
-                    wait_seconds = max(
-                        wait_seconds,
-                        float(message.split(marker, 1)[1].split("s", 1)[0]) + 1,
-                    )
-                except ValueError:
-                    pass
-            await asyncio.sleep(min(wait_seconds, 60))
+            await asyncio.sleep(quota_retry_wait_seconds(exc, attempt))
 
     assert last_error is not None
     raise last_error
@@ -264,29 +289,26 @@ async def search_recipes(
     query_text = build_query_context(ingredients, dietary_preferences)
     query_filter = build_ingredient_filter(ingredients)
 
-    qdrant = _qdrant_client()
+    qdrant = get_qdrant_client()
+    if query_filter is not None:
+        await _ensure_ingredients_text_index(qdrant)
+
     try:
-        if query_filter is not None:
-            await _ensure_ingredients_text_index(qdrant)
+        query_vector = await embed_query(query_text)
+    except Exception as exc:
+        if not is_quota_error(exc):
+            raise
+        # Free-tier embed quota exhausted - still return usable context.
+        return await _filter_only_search(qdrant, query_filter, limit)
 
-        try:
-            query_vector = await embed_query(query_text)
-        except Exception as exc:
-            if not _is_quota_error(exc):
-                raise
-            # Free-tier embed quota exhausted - still return usable context.
-            return await _filter_only_search(qdrant, query_filter, limit)
-
-        results = await qdrant.query_points(
-            collection_name=COLLECTION_NAME,
-            query=query_vector,
-            query_filter=query_filter,
-            limit=limit,
-            with_payload=True,
-        )
-        return [_format_hit(point) for point in results.points]
-    finally:
-        await qdrant.close()
+    results = await qdrant.query_points(
+        collection_name=COLLECTION_NAME,
+        query=query_vector,
+        query_filter=query_filter,
+        limit=limit,
+        with_payload=True,
+    )
+    return [_format_hit(point) for point in results.points]
 
 
 async def main() -> None:
@@ -295,8 +317,11 @@ async def main() -> None:
 
     sample_inventory = ["chicken", "garlic", "tomato"]
     sample_diet = "high protein, low carb"
-    matches = await search_recipes(sample_inventory, sample_diet, limit=5)
-    print(json.dumps(matches, indent=2, ensure_ascii=False))
+    try:
+        matches = await search_recipes(sample_inventory, sample_diet, limit=5)
+        print(json.dumps(matches, indent=2, ensure_ascii=False))
+    finally:
+        await close_qdrant_client()
 
 
 if __name__ == "__main__":

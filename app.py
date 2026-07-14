@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import os
 import re
+import time
 from collections.abc import Iterator
 from datetime import datetime
 from typing import Any
@@ -649,6 +650,13 @@ def stream_recipe(payload: dict[str, Any]) -> Iterator[str]:
         try:
             with httpx.Client(timeout=timeout, follow_redirects=True) as client:
                 with client.stream("POST", GENERATE_URL, json=payload) as response:
+                    if response.status_code in {429, 502, 503} and attempt == 0:
+                        body = response.read().decode("utf-8", errors="replace")
+                        last_error = RuntimeError(
+                            f"API error {response.status_code}: {body}"
+                        )
+                        time.sleep(2 ** (attempt + 1))
+                        continue
                     if response.status_code >= 400:
                         body = response.read().decode("utf-8", errors="replace")
                         raise RuntimeError(f"API error {response.status_code}: {body}")
@@ -666,10 +674,11 @@ def stream_recipe(payload: dict[str, Any]) -> Iterator[str]:
         except (httpx.TimeoutException, httpx.TransportError) as exc:
             last_error = exc
             if attempt == 0:
+                time.sleep(2 ** (attempt + 1))
                 continue
             raise RuntimeError(f"Recipe service connection failed: {exc}") from exc
     if last_error:
-        raise RuntimeError(f"Recipe service connection failed: {last_error}") from last_error
+        raise RuntimeError(str(last_error)) from last_error
 
 
 def post_feedback(transaction_id: str, feedback: str) -> None:

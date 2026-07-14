@@ -25,12 +25,20 @@ from monitor import (
     save_interaction_safe,
     update_feedback,
 )
-from retrieval import RecipeResult, search_recipes
+from retrieval import (
+    RecipeResult,
+    close_qdrant_client,
+    is_daily_quota,
+    is_quota_error,
+    quota_retry_wait_seconds,
+    search_recipes,
+)
 
 load_dotenv()
 
 GENERATION_MODEL = "gemini-2.5-flash"
 APP_TITLE = "ChefBot AI"
+MAX_GENERATION_RETRIES = 3
 
 # Streamlit Cloud frontend + local dev defaults.
 DEFAULT_CORS_ORIGINS = (
@@ -219,7 +227,10 @@ class FeedbackRequest(BaseModel):
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     init_monitoring_table()
-    yield
+    try:
+        yield
+    finally:
+        await close_qdrant_client()
 
 
 app = FastAPI(title=APP_TITLE, version="1.0.0", lifespan=lifespan)
@@ -335,6 +346,58 @@ def _ingredient_list_for_macros(
     return [str(item) for item in inventory]
 
 
+def _call_genai_with_retry(operation: str, fn: Any) -> Any:
+    """Retry sync Gemini calls on transient rate limits (not daily quota)."""
+    last_error: BaseException | None = None
+    for attempt in range(1, MAX_GENERATION_RETRIES + 1):
+        try:
+            return fn()
+        except Exception as exc:  # noqa: BLE001
+            last_error = exc
+            if not is_quota_error(exc) or is_daily_quota(exc):
+                raise
+            wait = quota_retry_wait_seconds(exc, attempt)
+            print(
+                f"[chefbot] {operation} rate-limited "
+                f"(attempt {attempt}/{MAX_GENERATION_RETRIES}); sleeping {wait:.1f}s"
+            )
+            time.sleep(wait)
+    assert last_error is not None
+    raise last_error
+
+
+def _iter_genai_stream_with_retry(
+    operation: str,
+    make_stream: Any,
+) -> Iterator[types.GenerateContentResponse]:
+    """
+    Retry stream creation on 429 before any chunks are yielded.
+
+    Once a chunk has been yielded, failures propagate (avoids duplicated text).
+    """
+    last_error: BaseException | None = None
+    for attempt in range(1, MAX_GENERATION_RETRIES + 1):
+        started_yielding = False
+        try:
+            stream = make_stream()
+            for chunk in stream:
+                started_yielding = True
+                yield chunk
+            return
+        except Exception as exc:  # noqa: BLE001
+            last_error = exc
+            if started_yielding or not is_quota_error(exc) or is_daily_quota(exc):
+                raise
+            wait = quota_retry_wait_seconds(exc, attempt)
+            print(
+                f"[chefbot] {operation} rate-limited "
+                f"(attempt {attempt}/{MAX_GENERATION_RETRIES}); sleeping {wait:.1f}s"
+            )
+            time.sleep(wait)
+    assert last_error is not None
+    raise last_error
+
+
 def stream_recipe_response(
     inventory: list[str],
     dietary_choices: str,
@@ -346,29 +409,35 @@ def stream_recipe_response(
     Passes the hardcoded `estimate_macros` Python tool into Gemini function
     calling, then appends the tool's calculated macros to the streamed text so
     nutrition figures never come from model hallucination.
+
+    Transient Gemini 429s are retried with hint-aware backoff before any text
+    is sent to the client.
     """
     client = get_genai_client()
     prompt = build_user_prompt(inventory, dietary_choices, recipes)
     collected_calls: list[types.FunctionCall] = []
     yielded_text = False
 
-    stream = client.models.generate_content_stream(
-        model=GENERATION_MODEL,
-        contents=prompt,
-        config=types.GenerateContentConfig(
-            system_instruction=SYSTEM_PROMPT,
-            tools=[estimate_macros],
-            automatic_function_calling=types.AutomaticFunctionCallingConfig(
-                # Disable SDK auto-loop so we append macros ourselves and the
-                # model cannot paraphrase/hallucinate nutrition after the tool.
-                disable=True,
+    stream = _iter_genai_stream_with_retry(
+        "generate_content_stream",
+        lambda: client.models.generate_content_stream(
+            model=GENERATION_MODEL,
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                system_instruction=SYSTEM_PROMPT,
+                tools=[estimate_macros],
+                automatic_function_calling=types.AutomaticFunctionCallingConfig(
+                    # Disable SDK auto-loop so we append macros ourselves and the
+                    # model cannot paraphrase/hallucinate nutrition after the tool.
+                    disable=True,
+                ),
+                tool_config=types.ToolConfig(
+                    function_calling_config=types.FunctionCallingConfig(
+                        mode=types.FunctionCallingConfigMode.AUTO,
+                    )
+                ),
+                temperature=0.4,
             ),
-            tool_config=types.ToolConfig(
-                function_calling_config=types.FunctionCallingConfig(
-                    mode=types.FunctionCallingConfigMode.AUTO,
-                )
-            ),
-            temperature=0.4,
         ),
     )
 
@@ -382,16 +451,19 @@ def stream_recipe_response(
     # If the model only emitted a function call, stream a tool-free narrative
     # pass so the client still receives a real-time recipe.
     if not yielded_text:
-        narrative_stream = client.models.generate_content_stream(
-            model=GENERATION_MODEL,
-            contents=(
-                f"{prompt}\n\n"
-                "Write the full recipe now. Do not call tools and do not include "
-                "any nutrition numbers."
-            ),
-            config=types.GenerateContentConfig(
-                system_instruction=SYSTEM_PROMPT,
-                temperature=0.4,
+        narrative_stream = _iter_genai_stream_with_retry(
+            "narrative_stream",
+            lambda: client.models.generate_content_stream(
+                model=GENERATION_MODEL,
+                contents=(
+                    f"{prompt}\n\n"
+                    "Write the full recipe now. Do not call tools and do not include "
+                    "any nutrition numbers."
+                ),
+                config=types.GenerateContentConfig(
+                    system_instruction=SYSTEM_PROMPT,
+                    temperature=0.4,
+                ),
             ),
         )
         for chunk in narrative_stream:
@@ -402,35 +474,38 @@ def stream_recipe_response(
     tool_invoked = any(call.name == "estimate_macros" for call in collected_calls)
     if not tool_invoked:
         # Force Gemini function calling against the hardcoded Python tool.
-        forced = client.models.generate_content(
-            model=GENERATION_MODEL,
-            contents=[
-                types.Content(role="user", parts=[types.Part(text=prompt)]),
-                types.Content(
-                    role="user",
-                    parts=[
-                        types.Part(
-                            text=(
-                                "Call estimate_macros now with the final recipe "
-                                "ingredient list. Do not write nutrition numbers."
+        forced = _call_genai_with_retry(
+            "estimate_macros_force",
+            lambda: client.models.generate_content(
+                model=GENERATION_MODEL,
+                contents=[
+                    types.Content(role="user", parts=[types.Part(text=prompt)]),
+                    types.Content(
+                        role="user",
+                        parts=[
+                            types.Part(
+                                text=(
+                                    "Call estimate_macros now with the final recipe "
+                                    "ingredient list. Do not write nutrition numbers."
+                                )
                             )
+                        ],
+                    ),
+                ],
+                config=types.GenerateContentConfig(
+                    system_instruction=SYSTEM_PROMPT,
+                    tools=[estimate_macros],
+                    automatic_function_calling=types.AutomaticFunctionCallingConfig(
+                        disable=True
+                    ),
+                    tool_config=types.ToolConfig(
+                        function_calling_config=types.FunctionCallingConfig(
+                            mode=types.FunctionCallingConfigMode.ANY,
+                            allowed_function_names=["estimate_macros"],
                         )
-                    ],
+                    ),
+                    temperature=0.0,
                 ),
-            ],
-            config=types.GenerateContentConfig(
-                system_instruction=SYSTEM_PROMPT,
-                tools=[estimate_macros],
-                automatic_function_calling=types.AutomaticFunctionCallingConfig(
-                    disable=True
-                ),
-                tool_config=types.ToolConfig(
-                    function_calling_config=types.FunctionCallingConfig(
-                        mode=types.FunctionCallingConfigMode.ANY,
-                        allowed_function_names=["estimate_macros"],
-                    )
-                ),
-                temperature=0.0,
             ),
         )
         collected_calls.extend(_extract_function_calls(forced))
