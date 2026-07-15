@@ -60,6 +60,55 @@ def get_database_url() -> str:
     return os.getenv("DATABASE_URL", "").strip().strip('"')
 
 
+def normalize_database_url(database_url: str) -> str:
+    """
+    Prepare a Postgres URL for local Docker or hosted providers (Supabase/Neon).
+
+    Remote hosts get sslmode=require when unset. Localhost / docker stay plain.
+    Not for Render — use Supabase, Neon, or Vercel Postgres in production.
+    """
+    url = database_url.strip()
+    if not url:
+        return url
+
+    lowered = url.lower()
+    is_local = any(
+        host in lowered
+        for host in (
+            "localhost",
+            "127.0.0.1",
+            "@postgres:",  # docker compose service hostname
+            "@db:",
+        )
+    )
+    if is_local:
+        return url
+
+    if "sslmode=" not in lowered:
+        separator = "&" if "?" in url else "?"
+        url = f"{url}{separator}sslmode=require"
+    return url
+
+
+def _pool_connect_kwargs(database_url: str) -> dict[str, Any]:
+    """
+    Connection kwargs for psycopg.
+
+    Supabase transaction poolers (port 6543 / pooler hosts) do not support
+    prepared statements well, so disable them there.
+    """
+    kwargs: dict[str, Any] = {"connect_timeout": CONNECT_TIMEOUT_SECONDS}
+    lowered = database_url.lower()
+    uses_transaction_pooler = (
+        ":6543" in lowered
+        or "pooler.supabase.com" in lowered
+        or "pgbouncer=true" in lowered
+    )
+    if uses_transaction_pooler:
+        kwargs["prepare_threshold"] = None
+    return kwargs
+
+
 def get_pool() -> Any:
     """Lazy process-wide psycopg ConnectionPool."""
     global _POOL
@@ -68,7 +117,7 @@ def get_pool() -> Any:
 
     from psycopg_pool import ConnectionPool
 
-    database_url = get_database_url()
+    database_url = normalize_database_url(get_database_url())
     if not database_url:
         raise RuntimeError("DATABASE_URL is not configured in .env")
 
@@ -77,7 +126,7 @@ def get_pool() -> Any:
         min_size=POOL_MIN_SIZE,
         max_size=POOL_MAX_SIZE,
         timeout=POOL_TIMEOUT_SECONDS,
-        kwargs={"connect_timeout": CONNECT_TIMEOUT_SECONDS},
+        kwargs=_pool_connect_kwargs(database_url),
         open=True,
         name="chefbot-monitoring",
     )

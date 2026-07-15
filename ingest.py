@@ -272,7 +272,7 @@ def main() -> int:
 
     print(
         f"Starting ingestion: {len(recipes)} remaining recipes "
-        f"(IDs {already_indexed}→{total_target - 1}) in batches of {BATCH_SIZE} "
+        f"(IDs {already_indexed}->{total_target - 1}) in batches of {BATCH_SIZE} "
         f"({total_batches} batches)..."
     )
 

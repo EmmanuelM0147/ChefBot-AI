@@ -133,6 +133,17 @@ docker compose up -d
 python -u monitor.py   # optional smoke test: creates table + sample row
 ```
 
+### Production monitoring (Vercel)
+
+Use a hosted Postgres provider for live logs. Preferred: **Supabase**, **Neon**, or **Vercel Postgres**. Do **not** use Render for this project.
+
+1. Create a free Postgres project (Supabase is fine).
+2. Copy the **connection pooler** URI (Supabase transaction mode is typically port `6543`).
+3. Set `DATABASE_URL` in the Vercel project env (Production + Preview as needed).
+4. Redeploy the API. On boot, `init_monitoring_table()` creates `chefbot_interactions` automatically.
+
+`monitor.py` adds `sslmode=require` for remote hosts and disables prepared statements for Supabase/PgBouncer poolers.
+
 ### LLM-as-a-judge (offline)
 
 `evaluate.py` scores logged answers with Gemini on relevance, groundedness, and safety, then stores rows in `chefbot_evaluations`.
@@ -198,7 +209,7 @@ DATABASE_URL="postgresql://user:password@localhost:5433/chefbot_monitoring"
 | `GEMINI_API_KEY` | Embeddings + Gemini 2.5 Flash generation |
 | `QDRANT_URL` / `QDRANT_API_KEY` | Vector store for `chefbot_recipes` |
 | `CHEFBOT_API_URL` | Streamlit -> FastAPI base URL (local or Vercel) |
-| `DATABASE_URL` | Monitoring DB (`docker compose` maps Postgres to `localhost:5433`) |
+| `DATABASE_URL` | Monitoring DB: local `docker compose` (`localhost:5433`) or hosted Supabase/Neon/Vercel Postgres (not Render) |
 | `CORS_ORIGINS` | Comma-separated browser origins allowed by FastAPI CORS |
 
 ---
@@ -207,7 +218,8 @@ DATABASE_URL="postgresql://user:password@localhost:5433/chefbot_monitoring"
 
 1. **Backend (Vercel)**
    - Deploy this repo (Vercel detects `main.py` FastAPI `app`).
-   - Set env vars in Vercel: `GEMINI_API_KEY`, `QDRANT_URL`, `QDRANT_API_KEY`, `DATABASE_URL` (optional), `CORS_ORIGINS`.
+   - Set env vars in Vercel: `GEMINI_API_KEY`, `QDRANT_URL`, `QDRANT_API_KEY`, `DATABASE_URL` (hosted Postgres URI), `CORS_ORIGINS`.
+   - For `DATABASE_URL`, use Supabase/Neon/Vercel Postgres pooler URI (not Render). Table bootstrap is automatic on deploy.
    - Recommended `CORS_ORIGINS`:
      `https://chefbot-ai-9v272ty2jahksxappfpvhqg.streamlit.app,http://localhost:8501`
    - `vercel.json` sets `maxDuration: 60` for long recipe streams.
