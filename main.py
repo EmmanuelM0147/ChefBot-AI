@@ -22,6 +22,7 @@ from pydantic import BaseModel, Field
 
 from monitor import (
     close_pool,
+    get_monitoring_summary,
     init_monitoring_table,
     new_transaction_id,
     save_interaction_safe,
@@ -637,6 +638,18 @@ async def submit_feedback(body: FeedbackRequest) -> dict[str, Any]:
     }
 
 
+@app.get("/api/monitoring/summary")
+async def monitoring_summary() -> dict[str, Any]:
+    """Compact interaction + judge metrics from Postgres (Zoomcamp-style)."""
+    try:
+        return get_monitoring_summary()
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(
+            status_code=503,
+            detail=f"Monitoring summary unavailable: {exc}",
+        ) from exc
+
+
 @app.get("/")
 async def root() -> dict[str, Any]:
     return {
@@ -658,6 +671,10 @@ async def root() -> dict[str, Any]:
                 "transaction_id": "uuid",
                 "feedback": "thumbs_up",
             },
+        },
+        "monitoring_summary": {
+            "method": "GET",
+            "path": "/api/monitoring/summary",
         },
     }
 

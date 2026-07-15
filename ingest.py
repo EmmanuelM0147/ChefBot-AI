@@ -1,8 +1,8 @@
 """
 Ingest ChefBot recipes into Qdrant with Gemini embedding vectors.
 
-Reads the first 1,000 recipes (test limit), embeds in batches of 32, and
-upserts PointStruct records into the `chefbot_recipes` collection.
+Reads recipes (default first 3,000; override with --limit), embeds in batches
+of 32, and upserts PointStruct records into the `chefbot_recipes` collection.
 
 Note: text-embedding-004 is no longer available on the Gemini API; we use
 gemini-embedding-001 with output_dimensionality=768 (same vector size).
@@ -28,9 +28,9 @@ COLLECTION_NAME = "chefbot_recipes"
 EMBEDDING_MODEL = "gemini-embedding-001"
 VECTOR_SIZE = 768
 BATCH_SIZE = 32
-MAX_RECIPES = 1_000
+MAX_RECIPES = 3_000
 # Free-tier embed quota is ~100 requests/min (each text in a batch counts).
-# Pace batches so we stay under the limit across the full 1,000-recipe run.
+# Pace batches so we stay under the limit across large ingest runs.
 BATCH_PAUSE_SECONDS = 20
 MAX_EMBED_RETRIES = 6
 
@@ -244,15 +244,29 @@ def main() -> int:
         )
         return 1
 
+    limit = MAX_RECIPES
+    recreate = False
+    args = sys.argv[1:]
+    i = 0
+    while i < len(args):
+        if args[i] == "--recreate":
+            recreate = True
+            i += 1
+        elif args[i] == "--limit" and i + 1 < len(args):
+            limit = max(1, int(args[i + 1]))
+            i += 2
+        else:
+            print(f"Unknown argument: {args[i]}", file=sys.stderr)
+            return 1
+
     dataset_path = resolve_dataset_path()
-    recipes = load_recipes(dataset_path, limit=MAX_RECIPES)
+    recipes = load_recipes(dataset_path, limit=limit)
     if not recipes:
         print("ERROR: No recipes loaded.", file=sys.stderr)
         return 1
 
     print(f"Initializing Gemini client (model={EMBEDDING_MODEL})...")
     genai_client = genai.Client(api_key=gemini_api_key)
-    recreate = "--recreate" in sys.argv
     qdrant = init_qdrant(qdrant_url, qdrant_api_key, recreate=recreate)
 
     already_indexed = 0 if recreate else existing_point_count(qdrant)

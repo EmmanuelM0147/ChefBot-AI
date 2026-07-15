@@ -166,7 +166,18 @@ def is_quota_error(exc: BaseException) -> bool:
 
 def is_daily_quota(exc: BaseException) -> bool:
     text = str(exc)
-    return "PerDay" in text or "RequestsPerDay" in text
+    if "PerDay" not in text and "RequestsPerDay" not in text:
+        return False
+    # Some free-tier errors label the metric *PerDay* but still return a short
+    # retryDelay (tens of seconds). Treat those as transient rate limits.
+    match = re.search(r"Please retry in\s+([0-9.]+)\s*s", text, flags=re.IGNORECASE)
+    if match:
+        try:
+            if float(match.group(1)) <= 120:
+                return False
+        except ValueError:
+            pass
+    return True
 
 
 def quota_retry_wait_seconds(exc: BaseException, attempt: int) -> float:

@@ -39,6 +39,7 @@ def resolve_api_base_url() -> str:
 API_BASE_URL = resolve_api_base_url()
 GENERATE_URL = f"{API_BASE_URL}/api/generate-recipe"
 FEEDBACK_URL = f"{API_BASE_URL}/api/feedback"
+MONITORING_SUMMARY_URL = f"{API_BASE_URL}/api/monitoring/summary"
 
 DIET_OPTIONS = [
     "Vegetarian",
@@ -690,6 +691,17 @@ def post_feedback(transaction_id: str, feedback: str) -> None:
     response.raise_for_status()
 
 
+def fetch_monitoring_summary() -> dict[str, Any] | None:
+    try:
+        response = httpx.get(MONITORING_SUMMARY_URL, timeout=15.0)
+        if response.status_code >= 400:
+            return None
+        data = response.json()
+        return data if isinstance(data, dict) else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def push_history(recipe_text: str, payload: dict[str, Any]) -> None:
     title, _ = extract_dish_title(split_recipe_and_macros(recipe_text)[0])
     entry = {
@@ -732,6 +744,7 @@ def generate_and_render(payload: dict[str, Any]) -> None:
         unsafe_allow_html=True,
     )
     status = st.status("Chef is plating your recipe...", expanded=False)
+    st.caption("Usually under a minute. If this stalls near ~55s, try again.")
     try:
         chunks: list[str] = []
         placeholder = st.empty()
@@ -840,6 +853,39 @@ with st.sidebar:
     ):
         st.session_state["recipe_history"] = []
         st.rerun()
+
+    st.divider()
+    st.markdown("### Kitchen metrics")
+    st.caption("Zoomcamp-style logs in Postgres — not Grafana.")
+    if st.button("Refresh metrics", use_container_width=True):
+        st.session_state.pop("monitoring_summary", None)
+    if "monitoring_summary" not in st.session_state:
+        st.session_state["monitoring_summary"] = fetch_monitoring_summary()
+    summary = st.session_state.get("monitoring_summary")
+    if not summary:
+        st.caption("Metrics unavailable right now.")
+    else:
+        interactions = summary.get("interactions") or {}
+        evaluations = summary.get("evaluations") or {}
+        st.caption(
+            f"Plates logged: {interactions.get('interactions', 0)} · "
+            f"ok {interactions.get('ok_count', 0)} · "
+            f"errors {interactions.get('error_count', 0)}"
+        )
+        latency = interactions.get("avg_latency_ms")
+        if latency is not None:
+            st.caption(f"Avg latency: {latency} ms")
+        st.caption(
+            f"Thumbs: ↑ {interactions.get('thumbs_up', 0)} · "
+            f"↓ {interactions.get('thumbs_down', 0)}"
+        )
+        if evaluations.get("evaluations"):
+            st.caption(
+                f"Judge: {evaluations.get('evaluations')} scored · "
+                f"avg {evaluations.get('avg_overall')} · "
+                f"pass {evaluations.get('pass_count')} / "
+                f"fail {evaluations.get('fail_count')}"
+            )
 
     st.divider()
     st.markdown("### Recent plates")

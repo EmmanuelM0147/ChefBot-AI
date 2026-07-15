@@ -137,6 +137,14 @@ python -u monitor.py   # optional smoke test: creates table + sample row
 
 Use a hosted Postgres provider for live logs. Preferred: **Supabase**, **Neon**, or **Vercel Postgres**. Do **not** use Render for this project.
 
+**Monitoring plan (no Grafana):** Zoomcamp-style Postgres tables are the source of truth.
+- `chefbot_interactions` — every generation + feedback + latency
+- `chefbot_evaluations` — offline LLM-as-a-judge scores
+- Inspect in the Supabase table editor, or via `GET /api/monitoring/summary`
+- The Streamlit sidebar shows a compact "Kitchen metrics" readout from that endpoint
+
+Grafana is optional later only if you want ops-style time-series dashboards; it is not required for this stack.
+
 1. Create a free Postgres project (Supabase is fine).
 2. Copy the **connection pooler** URI (Supabase transaction mode is typically port `6543`).
 3. Set `DATABASE_URL` in the Vercel project env (Production + Preview as needed).

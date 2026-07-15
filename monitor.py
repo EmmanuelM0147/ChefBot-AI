@@ -326,6 +326,76 @@ def save_interaction_safe(**kwargs: Any) -> None:
         logger.warning("Background monitoring save failed: %s", exc)
 
 
+def get_monitoring_summary() -> dict[str, Any]:
+    """
+    Lightweight Zoomcamp-style metrics from Postgres.
+
+    This is the intended monitoring surface (Supabase + SQL/API), not Grafana.
+    """
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT
+                    COUNT(*)::int AS interactions,
+                    COUNT(*) FILTER (WHERE status = 'ok')::int AS ok_count,
+                    COUNT(*) FILTER (WHERE status <> 'ok')::int AS error_count,
+                    COUNT(*) FILTER (WHERE user_feedback = 'thumbs_up')::int AS thumbs_up,
+                    COUNT(*) FILTER (WHERE user_feedback = 'thumbs_down')::int AS thumbs_down,
+                    ROUND(AVG(response_latency_ms)::numeric, 1) AS avg_latency_ms
+                FROM chefbot_interactions
+                """
+            )
+            inter = cur.fetchone()
+            inter_cols = [d.name for d in cur.description]
+            interaction_stats = dict(zip(inter_cols, inter))
+
+            cur.execute(
+                """
+                SELECT EXISTS (
+                    SELECT 1
+                    FROM information_schema.tables
+                    WHERE table_name = 'chefbot_evaluations'
+                )
+                """
+            )
+            has_evals = bool(cur.fetchone()[0])
+            evaluation_stats: dict[str, Any] = {
+                "evaluations": 0,
+                "avg_overall": None,
+                "pass_count": 0,
+                "fail_count": 0,
+                "borderline_count": 0,
+            }
+            if has_evals:
+                cur.execute(
+                    """
+                    SELECT
+                        COUNT(*)::int AS evaluations,
+                        ROUND(AVG(overall_score)::numeric, 2) AS avg_overall,
+                        COUNT(*) FILTER (WHERE verdict = 'pass')::int AS pass_count,
+                        COUNT(*) FILTER (WHERE verdict = 'fail')::int AS fail_count,
+                        COUNT(*) FILTER (WHERE verdict = 'borderline')::int AS borderline_count
+                    FROM chefbot_evaluations
+                    """
+                )
+                ev = cur.fetchone()
+                ev_cols = [d.name for d in cur.description]
+                evaluation_stats = dict(zip(ev_cols, ev))
+
+    return {
+        "source": "supabase_postgres",
+        "interactions": {
+            key: (float(value) if hasattr(value, "as_tuple") else value)
+            for key, value in interaction_stats.items()
+        },
+        "evaluations": {
+            key: (float(value) if hasattr(value, "as_tuple") else value)
+            for key, value in evaluation_stats.items()
+        },
+    }
+
+
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
     try:
