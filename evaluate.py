@@ -13,6 +13,7 @@ import logging
 import os
 import re
 import sys
+import time
 from datetime import datetime, timezone
 from statistics import mean
 from typing import Any
@@ -22,7 +23,8 @@ from dotenv import load_dotenv
 from google import genai
 from google.genai import types
 
-from monitor import get_connection, init_monitoring_table
+from monitor import close_pool, get_connection, init_monitoring_table
+from retrieval import is_daily_quota, is_quota_error, quota_retry_wait_seconds
 
 load_dotenv()
 
@@ -30,6 +32,8 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 logger = logging.getLogger("chefbot.evaluate")
 
 JUDGE_MODEL = "gemini-2.5-flash"
+MAX_JUDGE_RETRIES = 4
+JUDGE_PAUSE_SECONDS = 1.5
 
 CREATE_EVAL_TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS chefbot_evaluations (
@@ -164,19 +168,45 @@ def judge_interaction(client: genai.Client, row: dict[str, Any]) -> dict[str, An
         "assistant_answer": row.get("llm_output"),
         "user_feedback": row.get("user_feedback"),
     }
-    response = client.models.generate_content(
-        model=JUDGE_MODEL,
-        contents=(
-            "Evaluate this ChefBot interaction.\n\n"
-            + json.dumps(user_payload, ensure_ascii=False, indent=2)
-        ),
-        config=types.GenerateContentConfig(
-            system_instruction=JUDGE_SYSTEM,
-            temperature=0.0,
-            response_mime_type="application/json",
-        ),
+    contents = (
+        "Evaluate this ChefBot interaction.\n\n"
+        + json.dumps(user_payload, ensure_ascii=False, indent=2)
     )
-    raw = (response.text or "").strip()
+    config = types.GenerateContentConfig(
+        system_instruction=JUDGE_SYSTEM,
+        temperature=0.0,
+        response_mime_type="application/json",
+    )
+
+    raw = ""
+    last_error: BaseException | None = None
+    for attempt in range(1, MAX_JUDGE_RETRIES + 1):
+        try:
+            response = client.models.generate_content(
+                model=JUDGE_MODEL,
+                contents=contents,
+                config=config,
+            )
+            raw = (response.text or "").strip()
+            if not raw:
+                raise RuntimeError("Judge returned an empty response.")
+            break
+        except Exception as exc:  # noqa: BLE001
+            last_error = exc
+            if not is_quota_error(exc) or is_daily_quota(exc):
+                raise
+            wait = quota_retry_wait_seconds(exc, attempt)
+            logger.warning(
+                "Judge rate-limited (attempt %s/%s); sleeping %.1fs",
+                attempt,
+                MAX_JUDGE_RETRIES,
+                wait,
+            )
+            time.sleep(wait)
+    else:
+        assert last_error is not None
+        raise last_error
+
     parsed = _extract_json(raw)
 
     relevance = _clamp_score(parsed.get("relevance_score"))
@@ -296,6 +326,12 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Re-evaluate even if a prior judgment exists",
     )
+    parser.add_argument(
+        "--pause",
+        type=float,
+        default=JUDGE_PAUSE_SECONDS,
+        help=f"Seconds to pause between judge calls (default: {JUDGE_PAUSE_SECONDS})",
+    )
     args = parser.parse_args(argv)
 
     api_key = os.getenv("GEMINI_API_KEY", "").strip().strip('"')
@@ -303,36 +339,42 @@ def main(argv: list[str] | None = None) -> int:
         logger.error("Set GEMINI_API_KEY in .env before running the judge.")
         return 1
 
-    if not init_evaluation_table():
-        return 1
+    try:
+        if not init_evaluation_table():
+            return 1
 
-    rows = fetch_interactions(args.limit, only_unevaluated=not args.all)
-    if not rows:
-        print("No interactions to evaluate.")
-        return 0
+        rows = fetch_interactions(args.limit, only_unevaluated=not args.all)
+        if not rows:
+            print("No interactions to evaluate.")
+            return 0
 
-    client = genai.Client(api_key=api_key)
-    judged: list[dict[str, Any]] = []
+        client = genai.Client(api_key=api_key)
+        judged: list[dict[str, Any]] = []
 
-    for index, row in enumerate(rows, start=1):
-        interaction_id = str(row["id"])
-        print(
-            f"[{index}/{len(rows)}] Judging {interaction_id} "
-            f"(query={row.get('user_query')!r})"
-        )
-        try:
-            result = judge_interaction(client, row)
-            save_evaluation(interaction_id, result)
-            judged.append(result)
+        for index, row in enumerate(rows, start=1):
+            interaction_id = str(row["id"])
             print(
-                f"  -> overall={result['overall_score']} "
-                f"verdict={result['verdict']}"
+                f"[{index}/{len(rows)}] Judging {interaction_id} "
+                f"(query={row.get('user_query')!r})"
             )
-        except Exception as exc:  # noqa: BLE001
-            logger.error("Failed to judge %s: %s", interaction_id, exc)
+            try:
+                result = judge_interaction(client, row)
+                save_evaluation(interaction_id, result)
+                judged.append(result)
+                print(
+                    f"  -> overall={result['overall_score']} "
+                    f"verdict={result['verdict']}"
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.error("Failed to judge %s: %s", interaction_id, exc)
 
-    print_summary(judged)
-    return 0
+            if index < len(rows) and args.pause > 0:
+                time.sleep(args.pause)
+
+        print_summary(judged)
+        return 0
+    finally:
+        close_pool()
 
 
 if __name__ == "__main__":
