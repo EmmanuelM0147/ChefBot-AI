@@ -1,0 +1,867 @@
+{
+  "k": 5,
+  "min_ingredient_hits": 2,
+  "n_queries": 12,
+  "relevance_definition": "Recipe is relevant if >= 2 inventory ingredient token(s) appear in its ingredients text (case-insensitive substring).",
+  "summaries": {
+    "hybrid": {
+      "hit_rate": 1.0,
+      "mrr": 1.0,
+      "precision_at_k": 0.95,
+      "avg_coverage": 0.8833,
+      "avg_retrieved": 5
+    },
+    "vector_only": {
+      "hit_rate": 1.0,
+      "mrr": 1.0,
+      "precision_at_k": 0.95,
+      "avg_coverage": 0.8833,
+      "avg_retrieved": 5
+    },
+    "filter_only": {
+      "hit_rate": 1.0,
+      "mrr": 0.6625,
+      "precision_at_k": 0.3667,
+      "avg_coverage": 0.6625,
+      "avg_retrieved": 5
+    }
+  },
+  "winner": "hybrid",
+  "production_mode": "hybrid",
+  "details": {
+    "hybrid": [
+      {
+        "query_id": "q01",
+        "mode": "hybrid",
+        "retrieved": 5,
+        "hit": 1.0,
+        "mrr": 1.0,
+        "precision": 1.0,
+        "coverage": 0.8,
+        "titles": [
+          "Lemon Chicken Gnocchi",
+          "Lemon Chicken Gnocchi",
+          "Lemon Garlic Butter Chicken Spiedini",
+          "Lemon Garlic Butter Chicken Spiedini",
+          "Lemon Garlic Butter Chicken Spiedini"
+        ],
+        "relevance_flags": [
+          true,
+          true,
+          true,
+          true,
+          true
+        ]
+      },
+      {
+        "query_id": "q02",
+        "mode": "hybrid",
+        "retrieved": 5,
+        "hit": 1.0,
+        "mrr": 1.0,
+        "precision": 0.8,
+        "coverage": 1.0,
+        "titles": [
+          "Sheet Pan Honey Mustard Salmon and Green Beans",
+          "Sheet Pan Honey Mustard Salmon and Green Beans",
+          "Creamy One-Pan Lemon Garlic Chicken and Asparagus",
+          "Salmon Cream Cheese",
+          "Salmon Caesar Salad"
+        ],
+        "relevance_flags": [
+          true,
+          true,
+          true,
+          true,
+          false
+        ]
+      },
+      {
+        "query_id": "q03",
+        "mode": "hybrid",
+        "retrieved": 5,
+        "hit": 1.0,
+        "mrr": 1.0,
+        "precision": 1.0,
+        "coverage": 0.8,
+        "titles": [
+          "Ramen Omelet with Spinach, Mushrooms, and Cheese",
+          "Spinach Ricotta Quiche",
+          "Greek Spanakopita",
+          "Spinach Rolls with Puff Pastry",
+          "Egg White Breakfast Bites"
+        ],
+        "relevance_flags": [
+          true,
+          true,
+          true,
+          true,
+          true
+        ]
+      },
+      {
+        "query_id": "q04",
+        "mode": "hybrid",
+        "retrieved": 5,
+        "hit": 1.0,
+        "mrr": 1.0,
+        "precision": 1.0,
+        "coverage": 0.8,
+        "titles": [
+          "Caprese Pasta with Thai Basil",
+          "15-Minute Creamy Garlic Basil Pasta",
+          "15-Minute Creamy Garlic Basil Pasta",
+          "Bruschetta al Pomodoro",
+          "Vegetarian Sliders"
+        ],
+        "relevance_flags": [
+          true,
+          true,
+          true,
+          true,
+          true
+        ]
+      },
+      {
+        "query_id": "q05",
+        "mode": "hybrid",
+        "retrieved": 5,
+        "hit": 1.0,
+        "mrr": 1.0,
+        "precision": 1.0,
+        "coverage": 1.0,
+        "titles": [
+          "Air Fryer Pasta Tacos",
+          "Taco Beef Lettuce Cups",
+          "Taco Beef Lettuce Cups",
+          "Air Fryer Pasta Tacos",
+          "Air Fryer Pasta Tacos"
+        ],
+        "relevance_flags": [
+          true,
+          true,
+          true,
+          true,
+          true
+        ]
+      },
+      {
+        "query_id": "q06",
+        "mode": "hybrid",
+        "retrieved": 5,
+        "hit": 1.0,
+        "mrr": 1.0,
+        "precision": 0.8,
+        "coverage": 0.8,
+        "titles": [
+          "Mom's Butter Bean Soup",
+          "Lemon Chicken Orzo Soup",
+          "Tomato White Bean Soup",
+          "Nordstrom's Tomato Basil Soup",
+          "Couscous Chicken Soup"
+        ],
+        "relevance_flags": [
+          true,
+          true,
+          false,
+          true,
+          true
+        ]
+      },
+      {
+        "query_id": "q07",
+        "mode": "hybrid",
+        "retrieved": 5,
+        "hit": 1.0,
+        "mrr": 1.0,
+        "precision": 1.0,
+        "coverage": 1.0,
+        "titles": [
+          "Quick Asian Lettuce Wraps",
+          "Air Fryer Crispy Beef and Broccoli",
+          "Tofu Satay with Peanut Sauce",
+          "Steak and Broccoli Stir Fry",
+          "Miso Roasted Broccoli"
+        ],
+        "relevance_flags": [
+          true,
+          true,
+          true,
+          true,
+          true
+        ]
+      },
+      {
+        "query_id": "q08",
+        "mode": "hybrid",
+        "retrieved": 5,
+        "hit": 1.0,
+        "mrr": 1.0,
+        "precision": 1.0,
+        "coverage": 1.0,
+        "titles": [
+          "Real Hummus",
+          "Hummus III",
+          "Best Hummus",
+          "Hummus Without a Food Processor",
+          "Vitamix Hummus"
+        ],
+        "relevance_flags": [
+          true,
+          true,
+          true,
+          true,
+          true
+        ]
+      },
+      {
+        "query_id": "q09",
+        "mode": "hybrid",
+        "retrieved": 5,
+        "hit": 1.0,
+        "mrr": 1.0,
+        "precision": 0.8,
+        "coverage": 1.0,
+        "titles": [
+          "Pork and Apple Meatballs in Bao-Style Buns",
+          "Pork and Apple Meatballs in Bao-Style Buns",
+          "Cabbage, Potato, and Sausage Skillet",
+          "Sausage Rolls",
+          "Honey Mustard Ham and Cheese Sliders"
+        ],
+        "relevance_flags": [
+          true,
+          true,
+          true,
+          true,
+          false
+        ]
+      },
+      {
+        "query_id": "q10",
+        "mode": "hybrid",
+        "retrieved": 5,
+        "hit": 1.0,
+        "mrr": 1.0,
+        "precision": 1.0,
+        "coverage": 0.8,
+        "titles": [
+          "Spanish Garlic Shrimp (Gambas al Ajillo)",
+          "Grilled Marinated Shrimp",
+          "Grilled Marinated Shrimp",
+          "Bay Scallops with Garlic Parsley Butter Sauce",
+          "Chimichurri Shrimp"
+        ],
+        "relevance_flags": [
+          true,
+          true,
+          true,
+          true,
+          true
+        ]
+      },
+      {
+        "query_id": "q11",
+        "mode": "hybrid",
+        "retrieved": 5,
+        "hit": 1.0,
+        "mrr": 1.0,
+        "precision": 1.0,
+        "coverage": 0.8,
+        "titles": [
+          "Black Bean and Corn Salsa",
+          "Black Bean Salsa",
+          "Black Bean Avocado Salsa",
+          "Easy Black Bean Dip",
+          "Easy Black Bean Soup for Two"
+        ],
+        "relevance_flags": [
+          true,
+          true,
+          true,
+          true,
+          true
+        ]
+      },
+      {
+        "query_id": "q12",
+        "mode": "hybrid",
+        "retrieved": 5,
+        "hit": 1.0,
+        "mrr": 1.0,
+        "precision": 1.0,
+        "coverage": 0.8,
+        "titles": [
+          "Wild Mushroom Puff Pastry",
+          "Creamy Chicken and Mushroom Soup",
+          "Stuffed Cream Cheese Mushrooms",
+          "Cheesy Mushroom Puff Pastry Bites",
+          "Cheesy Mushroom Puff Pastry Bites"
+        ],
+        "relevance_flags": [
+          true,
+          true,
+          true,
+          true,
+          true
+        ]
+      }
+    ],
+    "vector_only": [
+      {
+        "query_id": "q01",
+        "mode": "vector_only",
+        "retrieved": 5,
+        "hit": 1.0,
+        "mrr": 1.0,
+        "precision": 1.0,
+        "coverage": 0.8,
+        "titles": [
+          "Lemon Chicken Gnocchi",
+          "Lemon Chicken Gnocchi",
+          "Lemon Garlic Butter Chicken Spiedini",
+          "Lemon Garlic Butter Chicken Spiedini",
+          "Lemon Garlic Butter Chicken Spiedini"
+        ],
+        "relevance_flags": [
+          true,
+          true,
+          true,
+          true,
+          true
+        ]
+      },
+      {
+        "query_id": "q02",
+        "mode": "vector_only",
+        "retrieved": 5,
+        "hit": 1.0,
+        "mrr": 1.0,
+        "precision": 0.8,
+        "coverage": 1.0,
+        "titles": [
+          "Sheet Pan Honey Mustard Salmon and Green Beans",
+          "Sheet Pan Honey Mustard Salmon and Green Beans",
+          "Creamy One-Pan Lemon Garlic Chicken and Asparagus",
+          "Salmon Cream Cheese",
+          "Salmon Caesar Salad"
+        ],
+        "relevance_flags": [
+          true,
+          true,
+          true,
+          true,
+          false
+        ]
+      },
+      {
+        "query_id": "q03",
+        "mode": "vector_only",
+        "retrieved": 5,
+        "hit": 1.0,
+        "mrr": 1.0,
+        "precision": 1.0,
+        "coverage": 0.8,
+        "titles": [
+          "Ramen Omelet with Spinach, Mushrooms, and Cheese",
+          "Spinach Ricotta Quiche",
+          "Greek Spanakopita",
+          "Spinach Rolls with Puff Pastry",
+          "Egg White Breakfast Bites"
+        ],
+        "relevance_flags": [
+          true,
+          true,
+          true,
+          true,
+          true
+        ]
+      },
+      {
+        "query_id": "q04",
+        "mode": "vector_only",
+        "retrieved": 5,
+        "hit": 1.0,
+        "mrr": 1.0,
+        "precision": 1.0,
+        "coverage": 0.8,
+        "titles": [
+          "Caprese Pasta with Thai Basil",
+          "15-Minute Creamy Garlic Basil Pasta",
+          "15-Minute Creamy Garlic Basil Pasta",
+          "Bruschetta al Pomodoro",
+          "Vegetarian Sliders"
+        ],
+        "relevance_flags": [
+          true,
+          true,
+          true,
+          true,
+          true
+        ]
+      },
+      {
+        "query_id": "q05",
+        "mode": "vector_only",
+        "retrieved": 5,
+        "hit": 1.0,
+        "mrr": 1.0,
+        "precision": 1.0,
+        "coverage": 1.0,
+        "titles": [
+          "Air Fryer Pasta Tacos",
+          "Taco Beef Lettuce Cups",
+          "Taco Beef Lettuce Cups",
+          "Air Fryer Pasta Tacos",
+          "Air Fryer Pasta Tacos"
+        ],
+        "relevance_flags": [
+          true,
+          true,
+          true,
+          true,
+          true
+        ]
+      },
+      {
+        "query_id": "q06",
+        "mode": "vector_only",
+        "retrieved": 5,
+        "hit": 1.0,
+        "mrr": 1.0,
+        "precision": 0.8,
+        "coverage": 0.8,
+        "titles": [
+          "Mom's Butter Bean Soup",
+          "Lemon Chicken Orzo Soup",
+          "Tomato White Bean Soup",
+          "Nordstrom's Tomato Basil Soup",
+          "Couscous Chicken Soup"
+        ],
+        "relevance_flags": [
+          true,
+          true,
+          false,
+          true,
+          true
+        ]
+      },
+      {
+        "query_id": "q07",
+        "mode": "vector_only",
+        "retrieved": 5,
+        "hit": 1.0,
+        "mrr": 1.0,
+        "precision": 1.0,
+        "coverage": 1.0,
+        "titles": [
+          "Quick Asian Lettuce Wraps",
+          "Air Fryer Crispy Beef and Broccoli",
+          "Tofu Satay with Peanut Sauce",
+          "Steak and Broccoli Stir Fry",
+          "Miso Roasted Broccoli"
+        ],
+        "relevance_flags": [
+          true,
+          true,
+          true,
+          true,
+          true
+        ]
+      },
+      {
+        "query_id": "q08",
+        "mode": "vector_only",
+        "retrieved": 5,
+        "hit": 1.0,
+        "mrr": 1.0,
+        "precision": 1.0,
+        "coverage": 1.0,
+        "titles": [
+          "Real Hummus",
+          "Hummus III",
+          "Best Hummus",
+          "Hummus Without a Food Processor",
+          "Vitamix Hummus"
+        ],
+        "relevance_flags": [
+          true,
+          true,
+          true,
+          true,
+          true
+        ]
+      },
+      {
+        "query_id": "q09",
+        "mode": "vector_only",
+        "retrieved": 5,
+        "hit": 1.0,
+        "mrr": 1.0,
+        "precision": 0.8,
+        "coverage": 1.0,
+        "titles": [
+          "Pork and Apple Meatballs in Bao-Style Buns",
+          "Pork and Apple Meatballs in Bao-Style Buns",
+          "Cabbage, Potato, and Sausage Skillet",
+          "Sausage Rolls",
+          "Honey Mustard Ham and Cheese Sliders"
+        ],
+        "relevance_flags": [
+          true,
+          true,
+          true,
+          true,
+          false
+        ]
+      },
+      {
+        "query_id": "q10",
+        "mode": "vector_only",
+        "retrieved": 5,
+        "hit": 1.0,
+        "mrr": 1.0,
+        "precision": 1.0,
+        "coverage": 0.8,
+        "titles": [
+          "Spanish Garlic Shrimp (Gambas al Ajillo)",
+          "Grilled Marinated Shrimp",
+          "Grilled Marinated Shrimp",
+          "Bay Scallops with Garlic Parsley Butter Sauce",
+          "Chimichurri Shrimp"
+        ],
+        "relevance_flags": [
+          true,
+          true,
+          true,
+          true,
+          true
+        ]
+      },
+      {
+        "query_id": "q11",
+        "mode": "vector_only",
+        "retrieved": 5,
+        "hit": 1.0,
+        "mrr": 1.0,
+        "precision": 1.0,
+        "coverage": 0.8,
+        "titles": [
+          "Black Bean and Corn Salsa",
+          "Black Bean Salsa",
+          "Black Bean Avocado Salsa",
+          "Easy Black Bean Dip",
+          "Easy Black Bean Soup for Two"
+        ],
+        "relevance_flags": [
+          true,
+          true,
+          true,
+          true,
+          true
+        ]
+      },
+      {
+        "query_id": "q12",
+        "mode": "vector_only",
+        "retrieved": 5,
+        "hit": 1.0,
+        "mrr": 1.0,
+        "precision": 1.0,
+        "coverage": 0.8,
+        "titles": [
+          "Wild Mushroom Puff Pastry",
+          "Creamy Chicken and Mushroom Soup",
+          "Stuffed Cream Cheese Mushrooms",
+          "Cheesy Mushroom Puff Pastry Bites",
+          "Cheesy Mushroom Puff Pastry Bites"
+        ],
+        "relevance_flags": [
+          true,
+          true,
+          true,
+          true,
+          true
+        ]
+      }
+    ],
+    "filter_only": [
+      {
+        "query_id": "q01",
+        "mode": "filter_only",
+        "retrieved": 5,
+        "hit": 1.0,
+        "mrr": 1.0,
+        "precision": 1.0,
+        "coverage": 0.8,
+        "titles": [
+          "Air Fryer Potato Slices with Dipping Sauce",
+          "3-Ingredient Air Fryer Everything Bagel Chicken Strips",
+          "Air Fryer Everything Bagel Chicken Cutlets",
+          "Air Fryer Honey Sriracha Salmon Bites",
+          "Air Fryer Peanut Chicken"
+        ],
+        "relevance_flags": [
+          true,
+          true,
+          true,
+          true,
+          true
+        ]
+      },
+      {
+        "query_id": "q02",
+        "mode": "filter_only",
+        "retrieved": 5,
+        "hit": 1.0,
+        "mrr": 0.3333333333333333,
+        "precision": 0.2,
+        "coverage": 0.75,
+        "titles": [
+          "Air Fryer Peanut Chicken",
+          "Air Fryer Hot Honey Glazed Carrots",
+          "Copycat Cinnabon Delights Hawaiian Rolls",
+          "Air Fryer Lamb Chops",
+          "Air Fryer Honey Mustard Salmon Bites"
+        ],
+        "relevance_flags": [
+          false,
+          false,
+          true,
+          false,
+          false
+        ]
+      },
+      {
+        "query_id": "q03",
+        "mode": "filter_only",
+        "retrieved": 5,
+        "hit": 1.0,
+        "mrr": 1.0,
+        "precision": 0.2,
+        "coverage": 0.8,
+        "titles": [
+          "Air Fryer Potato Slices with Dipping Sauce",
+          "Air Fryer Everything Bagel Chicken Cutlets",
+          "Air Fryer Corn on The Cob",
+          "Air Fryer Crispy Onions",
+          "Air Fryer Sauteed Onions"
+        ],
+        "relevance_flags": [
+          true,
+          false,
+          false,
+          false,
+          false
+        ]
+      },
+      {
+        "query_id": "q04",
+        "mode": "filter_only",
+        "retrieved": 5,
+        "hit": 1.0,
+        "mrr": 1.0,
+        "precision": 0.2,
+        "coverage": 0.4,
+        "titles": [
+          "Air Fryer Potato Slices with Dipping Sauce",
+          "3-Ingredient Air Fryer Everything Bagel Chicken Strips",
+          "Air Fryer Everything Bagel Chicken Cutlets",
+          "Air Fryer Honey Sriracha Salmon Bites",
+          "Air Fryer Peanut Chicken"
+        ],
+        "relevance_flags": [
+          true,
+          false,
+          false,
+          false,
+          false
+        ]
+      },
+      {
+        "query_id": "q05",
+        "mode": "filter_only",
+        "retrieved": 5,
+        "hit": 1.0,
+        "mrr": 0.25,
+        "precision": 0.2,
+        "coverage": 1.0,
+        "titles": [
+          "Air Fryer Potato Slices with Dipping Sauce",
+          "Air Fryer Crispy Onions",
+          "Air Fryer Sauteed Onions",
+          "Air Fryer Pasta Tacos",
+          "Air Fryer English Muffin Tuna Melt"
+        ],
+        "relevance_flags": [
+          false,
+          false,
+          false,
+          true,
+          false
+        ]
+      },
+      {
+        "query_id": "q06",
+        "mode": "filter_only",
+        "retrieved": 5,
+        "hit": 1.0,
+        "mrr": 0.2,
+        "precision": 0.2,
+        "coverage": 0.6,
+        "titles": [
+          "Air Fryer Potato Slices with Dipping Sauce",
+          "Air Fryer Crispy Onions",
+          "Air Fryer Hot Honey Glazed Carrots",
+          "Air Fryer Sauteed Onions",
+          "Air Fryer English Muffin Tuna Melt"
+        ],
+        "relevance_flags": [
+          false,
+          false,
+          false,
+          false,
+          true
+        ]
+      },
+      {
+        "query_id": "q07",
+        "mode": "filter_only",
+        "retrieved": 5,
+        "hit": 1.0,
+        "mrr": 1.0,
+        "precision": 0.8,
+        "coverage": 0.6,
+        "titles": [
+          "Gochujang Pork Belly Bites",
+          "Air Fryer Honey Sriracha Salmon Bites",
+          "Air Fryer Peanut Chicken",
+          "Panko Sesame Crusted Salmon Bites",
+          "Air Fryer Firecracker Salmon Bites"
+        ],
+        "relevance_flags": [
+          true,
+          true,
+          true,
+          false,
+          true
+        ]
+      },
+      {
+        "query_id": "q08",
+        "mode": "filter_only",
+        "retrieved": 5,
+        "hit": 1.0,
+        "mrr": 1.0,
+        "precision": 0.2,
+        "coverage": 0.4,
+        "titles": [
+          "Air Fryer Potato Slices with Dipping Sauce",
+          "3-Ingredient Air Fryer Everything Bagel Chicken Strips",
+          "Air Fryer Everything Bagel Chicken Cutlets",
+          "Air Fryer Honey Sriracha Salmon Bites",
+          "Air Fryer Peanut Chicken"
+        ],
+        "relevance_flags": [
+          true,
+          false,
+          false,
+          false,
+          false
+        ]
+      },
+      {
+        "query_id": "q09",
+        "mode": "filter_only",
+        "retrieved": 5,
+        "hit": 1.0,
+        "mrr": 1.0,
+        "precision": 0.4,
+        "coverage": 0.8,
+        "titles": [
+          "Air Fryer Potato Slices with Dipping Sauce",
+          "Gochujang Pork Belly Bites",
+          "Air Fryer Crispy Onions",
+          "Air Fryer Sauteed Onions",
+          "Air Fryer English Muffin Tuna Melt"
+        ],
+        "relevance_flags": [
+          true,
+          false,
+          false,
+          false,
+          true
+        ]
+      },
+      {
+        "query_id": "q10",
+        "mode": "filter_only",
+        "retrieved": 5,
+        "hit": 1.0,
+        "mrr": 0.3333333333333333,
+        "precision": 0.2,
+        "coverage": 0.6,
+        "titles": [
+          "Air Fryer Potato Slices with Dipping Sauce",
+          "Air Fryer Honey Sriracha Salmon Bites",
+          "Air Fryer Peanut Chicken",
+          "Air Fryer Hot Honey Glazed Carrots",
+          "Air Fryer Pasta Tacos"
+        ],
+        "relevance_flags": [
+          false,
+          false,
+          true,
+          false,
+          false
+        ]
+      },
+      {
+        "query_id": "q11",
+        "mode": "filter_only",
+        "retrieved": 5,
+        "hit": 1.0,
+        "mrr": 0.5,
+        "precision": 0.4,
+        "coverage": 0.6,
+        "titles": [
+          "Air Fryer Honey Sriracha Salmon Bites",
+          "Air Fryer Corn on The Cob",
+          "Air Fryer Peanut Chicken",
+          "Panko Sesame Crusted Salmon Bites",
+          "Copycat Wingstop Cajun Corn"
+        ],
+        "relevance_flags": [
+          false,
+          true,
+          true,
+          false,
+          false
+        ]
+      },
+      {
+        "query_id": "q12",
+        "mode": "filter_only",
+        "retrieved": 5,
+        "hit": 1.0,
+        "mrr": 0.3333333333333333,
+        "precision": 0.4,
+        "coverage": 0.6,
+        "titles": [
+          "Air Fryer Potato Slices with Dipping Sauce",
+          "Air Fryer Honey Sriracha Salmon Bites",
+          "Air Fryer Peanut Chicken",
+          "Air Fryer Pasta Tacos",
+          "Copycat Cinnabon Delights Hawaiian Rolls"
+        ],
+        "relevance_flags": [
+          false,
+          false,
+          true,
+          true,
+          false
+        ]
+      }
+    ]
+  }
+}

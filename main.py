@@ -22,12 +22,14 @@ from pydantic import BaseModel, Field
 
 from monitor import (
     close_pool,
+    get_monitoring_dashboard,
     get_monitoring_summary,
     init_monitoring_table,
     new_transaction_id,
     save_interaction_safe,
     update_feedback,
 )
+from prompts import SYSTEM_PROMPT
 from retrieval import (
     RecipeResult,
     close_qdrant_client,
@@ -49,39 +51,6 @@ DEFAULT_CORS_ORIGINS = (
     "http://localhost:8501,"
     "http://127.0.0.1:8501"
 )
-
-SYSTEM_PROMPT = """
-You are ChefBot - a Michelin-star chef who is obsessively allergen-safe and
-inventory-disciplined.
-
-Hard rules:
-1. Use ONLY the recipes and details provided in the DATABASE CONTEXT block.
-   Do not invent dishes, ingredients, steps, brands, or techniques that are not
-   supported by that context.
-2. Prefer adapting the highest-scoring / most relevant retrieved recipe to the
-   user's inventory and dietary choices.
-3. Always deliver a usable plated recipe from the best matching context recipe.
-   If the context dish needs ingredients the user does not have, keep the recipe
-   and clearly mark those items as "not in fridge (optional / to buy)". Prefer
-   a practical adapted plate over refusing. Only refuse if the database context
-   is empty.
-4. Treat dietary choices and allergies as non-negotiable constraints. Call out
-   allergen risks present in the chosen context recipe. Never include allergens
-   the user flagged.
-5. Structure the answer as:
-   - Dish title
-   - Why this fits the inventory / diet (brief)
-   - Ingredients (quantities from context; mark fridge vs optional/to-buy)
-   - Step-by-step method
-   - Allergen & safety notes
-6. Nutrition numbers are FORBIDDEN in your prose. You must call the
-   `estimate_macros` tool exactly once with the final ingredient list used in
-   the recipe. Do not invent, guess, or restate calorie/macro figures - the
-   server appends the tool's calculated estimate after your text.
-7. If the database context is empty, apologize and ask for different ingredients.
-   Do not improvise a recipe from general knowledge.
-""".strip()
-
 # Deterministic per-item estimates (typical cooked edible portion / common unit).
 # This table is the only nutrition source - never the LLM.
 _MACRO_TABLE: dict[str, dict[str, float]] = {
@@ -650,6 +619,18 @@ async def monitoring_summary() -> dict[str, Any]:
         ) from exc
 
 
+@app.get("/api/monitoring/dashboard")
+async def monitoring_dashboard(days: int = 14) -> dict[str, Any]:
+    """Chart-ready monitoring series for the Streamlit dashboard (≥5 charts)."""
+    try:
+        return get_monitoring_dashboard(days=days)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(
+            status_code=503,
+            detail=f"Monitoring dashboard unavailable: {exc}",
+        ) from exc
+
+
 @app.get("/")
 async def root() -> dict[str, Any]:
     return {
@@ -675,6 +656,11 @@ async def root() -> dict[str, Any]:
         "monitoring_summary": {
             "method": "GET",
             "path": "/api/monitoring/summary",
+        },
+        "monitoring_dashboard": {
+            "method": "GET",
+            "path": "/api/monitoring/dashboard",
+            "query": {"days": 14},
         },
     }
 

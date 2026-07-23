@@ -1,0 +1,74 @@
+[
+  {
+    "id": "q01",
+    "ingredients": ["chicken", "garlic", "lemon", "olive oil", "rice"],
+    "diet": "high protein",
+    "notes": "Classic savory protein + starch plate"
+  },
+  {
+    "id": "q02",
+    "ingredients": ["salmon", "lemon", "asparagus", "butter"],
+    "diet": "pescatarian",
+    "notes": "Seafood + greens"
+  },
+  {
+    "id": "q03",
+    "ingredients": ["eggs", "spinach", "onion", "potato", "cheese"],
+    "diet": "vegetarian",
+    "notes": "Breakfast / brunch inventory"
+  },
+  {
+    "id": "q04",
+    "ingredients": ["pasta", "canned tomatoes", "garlic", "basil", "olive oil"],
+    "diet": "vegetarian",
+    "notes": "Pantry Italian"
+  },
+  {
+    "id": "q05",
+    "ingredients": ["ground beef", "onion", "tomato", "pasta"],
+    "diet": "none",
+    "notes": "Meat sauce pasta"
+  },
+  {
+    "id": "q06",
+    "ingredients": ["carrots", "celery", "onion", "lentils", "broth"],
+    "diet": "vegan",
+    "notes": "Soup / stew base"
+  },
+  {
+    "id": "q07",
+    "ingredients": ["tofu", "soy sauce", "ginger", "broccoli", "rice"],
+    "diet": "vegan",
+    "notes": "Asian-style plant protein"
+  },
+  {
+    "id": "q08",
+    "ingredients": ["chickpeas", "tahini", "lemon", "garlic", "olive oil"],
+    "diet": "vegan",
+    "notes": "Hummus-adjacent pantry"
+  },
+  {
+    "id": "q09",
+    "ingredients": ["pork", "apple", "onion", "mustard", "potato"],
+    "diet": "none",
+    "notes": "Pork + apple pairing"
+  },
+  {
+    "id": "q10",
+    "ingredients": ["shrimp", "garlic", "butter", "parsley", "pasta"],
+    "diet": "pescatarian",
+    "notes": "Scampi-style inventory"
+  },
+  {
+    "id": "q11",
+    "ingredients": ["black beans", "corn", "rice", "cumin", "lime"],
+    "diet": "vegetarian",
+    "notes": "Latin pantry bowl"
+  },
+  {
+    "id": "q12",
+    "ingredients": ["mushroom", "thyme", "cream", "garlic", "pasta"],
+    "diet": "vegetarian",
+    "notes": "Creamy mushroom pasta"
+  }
+]

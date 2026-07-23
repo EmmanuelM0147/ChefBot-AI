@@ -396,6 +396,165 @@ def get_monitoring_summary() -> dict[str, Any]:
     }
 
 
+def _jsonable_row(cols: list[str], row: tuple[Any, ...]) -> dict[str, Any]:
+    out: dict[str, Any] = {}
+    for key, value in zip(cols, row):
+        if hasattr(value, "isoformat"):
+            out[key] = value.isoformat()
+        elif hasattr(value, "as_tuple"):
+            out[key] = float(value)
+        else:
+            out[key] = value
+    return out
+
+
+def get_monitoring_dashboard(*, days: int = 14) -> dict[str, Any]:
+    """
+    Chart-ready monitoring payload for the Streamlit dashboard (≥5 series).
+
+    Charts:
+      1. interactions_per_day
+      2. avg_latency_per_day
+      3. status_breakdown
+      4. feedback_breakdown
+      5. judge_verdicts
+      6. judge_score_averages
+      7. feedback_rate_per_day (optional 7th)
+    """
+    window_days = max(1, min(int(days), 90))
+    summary = get_monitoring_summary()
+
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT
+                    DATE(created_at AT TIME ZONE 'UTC') AS day,
+                    COUNT(*)::int AS interactions,
+                    ROUND(AVG(response_latency_ms)::numeric, 1) AS avg_latency_ms,
+                    COUNT(*) FILTER (WHERE user_feedback IS NOT NULL)::int AS feedback_count
+                FROM chefbot_interactions
+                WHERE created_at >= (NOW() AT TIME ZONE 'UTC') - (%s || ' days')::interval
+                GROUP BY 1
+                ORDER BY 1
+                """,
+                (str(window_days),),
+            )
+            day_cols = [d.name for d in cur.description]
+            per_day = [_jsonable_row(day_cols, row) for row in cur.fetchall()]
+
+            cur.execute(
+                """
+                SELECT
+                    COALESCE(NULLIF(status, ''), 'unknown') AS status,
+                    COUNT(*)::int AS count
+                FROM chefbot_interactions
+                GROUP BY 1
+                ORDER BY count DESC
+                """
+            )
+            status_cols = [d.name for d in cur.description]
+            status_breakdown = [
+                _jsonable_row(status_cols, row) for row in cur.fetchall()
+            ]
+
+            cur.execute(
+                """
+                SELECT
+                    CASE
+                        WHEN user_feedback = 'thumbs_up' THEN 'thumbs_up'
+                        WHEN user_feedback = 'thumbs_down' THEN 'thumbs_down'
+                        ELSE 'none'
+                    END AS feedback,
+                    COUNT(*)::int AS count
+                FROM chefbot_interactions
+                GROUP BY 1
+                ORDER BY count DESC
+                """
+            )
+            feedback_cols = [d.name for d in cur.description]
+            feedback_breakdown = [
+                _jsonable_row(feedback_cols, row) for row in cur.fetchall()
+            ]
+
+            cur.execute(
+                """
+                SELECT EXISTS (
+                    SELECT 1
+                    FROM information_schema.tables
+                    WHERE table_name = 'chefbot_evaluations'
+                )
+                """
+            )
+            has_evals = bool(cur.fetchone()[0])
+
+            judge_verdicts: list[dict[str, Any]] = []
+            judge_score_averages: list[dict[str, Any]] = []
+            if has_evals:
+                cur.execute(
+                    """
+                    SELECT
+                        COALESCE(NULLIF(verdict, ''), 'unknown') AS verdict,
+                        COUNT(*)::int AS count
+                    FROM chefbot_evaluations
+                    GROUP BY 1
+                    ORDER BY count DESC
+                    """
+                )
+                verdict_cols = [d.name for d in cur.description]
+                judge_verdicts = [
+                    _jsonable_row(verdict_cols, row) for row in cur.fetchall()
+                ]
+
+                cur.execute(
+                    """
+                    SELECT
+                        ROUND(AVG(relevance_score)::numeric, 2) AS relevance,
+                        ROUND(AVG(groundedness_score)::numeric, 2) AS groundedness,
+                        ROUND(AVG(safety_score)::numeric, 2) AS safety,
+                        ROUND(AVG(overall_score)::numeric, 2) AS overall
+                    FROM chefbot_evaluations
+                    """
+                )
+                score_row = cur.fetchone()
+                if score_row:
+                    score_cols = [d.name for d in cur.description]
+                    averages = _jsonable_row(score_cols, score_row)
+                    judge_score_averages = [
+                        {"metric": key, "score": value}
+                        for key, value in averages.items()
+                        if value is not None
+                    ]
+
+    return {
+        "source": "supabase_postgres",
+        "window_days": window_days,
+        "summary": summary,
+        "charts": {
+            "interactions_per_day": per_day,
+            "avg_latency_per_day": [
+                {"day": row["day"], "avg_latency_ms": row.get("avg_latency_ms")}
+                for row in per_day
+            ],
+            "feedback_rate_per_day": [
+                {
+                    "day": row["day"],
+                    "feedback_rate": (
+                        round(row["feedback_count"] / row["interactions"], 3)
+                        if row.get("interactions")
+                        else 0.0
+                    ),
+                }
+                for row in per_day
+            ],
+            "status_breakdown": status_breakdown,
+            "feedback_breakdown": feedback_breakdown,
+            "judge_verdicts": judge_verdicts,
+            "judge_score_averages": judge_score_averages,
+        },
+    }
+
+
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
     try:

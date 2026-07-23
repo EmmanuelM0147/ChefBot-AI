@@ -1,2 +1,3 @@
-# Place recipes.json (and optional recipes.csv) in this folder locally.
-# Large dataset files are gitignored; see README for setup.
+# Place recipes.json here (JSONL preferred), or run:
+#   python -u prepare_dataset.py --from-sample
+# Large dumps are gitignored; sample_recipes.jsonl is tracked for reviewers.

@@ -37,7 +37,7 @@ flowchart LR
   ST -->|"POST /api/feedback<br/>thumbs"| FA
   FA --> RT
   RT --> EMB
-  RT -->|"cosine + ingredient filter<br/>(filter-only fallback)"| QD
+  RT -->|"rewrite → cosine + filter → rerank<br/>(filter-only fallback)"| QD
   FA --> GEN
   GEN -->|"function call"| TOOL
   FA -->|"StreamingResponse"| ST
@@ -52,8 +52,8 @@ flowchart LR
 
 1. User enters fridge inventory + diet/allergy constraints in Streamlit.
 2. UI opens an async streaming `POST` to `/api/generate-recipe`.
-3. FastAPI calls `search_recipes()`: embed the query, filter Qdrant payloads by inventory ingredients, return top matches.
-4. If Gemini embedding quota is exhausted, retrieval **falls back** to ingredient-filter-only Qdrant results (no vector ranking).
+3. FastAPI calls `search_recipes()`: rewrite the inventory query, embed it, filter Qdrant payloads by inventory ingredients, re-rank by ingredient overlap, return top matches.
+4. If Gemini embedding quota is exhausted, retrieval **falls back** to ingredient-filter-only Qdrant results (still re-ranked when possible).
 5. Gemini 2.5 Flash streams a Michelin-style, allergen-safe recipe **using only retrieved context**.
 6. The hardcoded `estimate_macros` tool is invoked via Gemini function calling; the **server** appends the calculated macros to the stream.
 7. After the stream completes, FastAPI **background-logs** the transaction to PostgreSQL (`user_query`, best recipe id, LLM output, latency).
@@ -137,13 +137,13 @@ python -u monitor.py   # optional smoke test: creates table + sample row
 
 Use a hosted Postgres provider for live logs. Preferred: **Supabase**, **Neon**, or **Vercel Postgres**. Do **not** use Render for this project.
 
-**Monitoring plan (no Grafana):** Zoomcamp-style Postgres tables are the source of truth.
+**Monitoring plan:** Zoomcamp-style Postgres tables are the source of truth.
+
 - `chefbot_interactions` — every generation + feedback + latency
 - `chefbot_evaluations` — offline LLM-as-a-judge scores
-- Inspect in the Supabase table editor, or via `GET /api/monitoring/summary`
-- The Streamlit sidebar shows a compact "Kitchen metrics" readout from that endpoint
-
-Grafana is optional later only if you want ops-style time-series dashboards; it is not required for this stack.
+- thumbs feedback on every plate (`/api/feedback`)
+- compact sidebar metrics via `GET /api/monitoring/summary`
+- Streamlit **Monitoring** dashboard (≥5 charts) via `GET /api/monitoring/dashboard`
 
 1. Create a free Postgres project (Supabase is fine).
 2. Copy the **connection pooler** URI (Supabase transaction mode is typically port `6543`).
@@ -152,11 +152,81 @@ Grafana is optional later only if you want ops-style time-series dashboards; it 
 
 `monitor.py` adds `sslmode=require` for remote hosts and disables prepared statements for Supabase/PgBouncer poolers.
 
-### LLM-as-a-judge (offline)
+### Streamlit monitoring dashboard
 
-`evaluate.py` scores logged answers with Gemini on relevance, groundedness, and safety, then stores rows in `chefbot_evaluations`.
+In the sidebar, switch **View → Monitoring**. Charts (7):
 
-Run from the **project root** (the folder that contains `main.py` / `.env`):
+1. Interactions / day  
+2. Avg latency / day  
+3. Status breakdown  
+4. Feedback breakdown (thumbs up / down / none)  
+5. Judge verdicts  
+6. Judge score averages  
+7. Feedback rate / day  
+
+API: `GET /api/monitoring/dashboard?days=14`
+
+### Retrieval evaluation (offline)
+
+`evaluate_retrieval.py` compares **three** retrieval approaches on a fixed inventory query set (`evals/retrieval_queries.json`):
+
+| Mode | What it does |
+|---|---|
+| `hybrid` | Cosine rank **with** inventory `MatchText` filter (production default) |
+| `vector_only` | Cosine rank **without** inventory filter |
+| `filter_only` | Inventory filter scroll only (no vector ranking) |
+
+**Relevance proxy:** a hit is relevant if ≥2 inventory ingredient tokens appear in the recipe's ingredients text (substring, case-insensitive). Metrics: **Hit@k**, **MRR**, **Precision@k**, and mean inventory **coverage**.
+
+```bash
+python -u evaluate_retrieval.py --k 5 --min-hits 2
+```
+
+**Latest run** (`evals/retrieval_results.json`, k=5, 12 queries):
+
+| Mode | Hit@5 | MRR | P@5 | Coverage |
+|---|---:|---:|---:|---:|
+| **hybrid** ★ | 1.000 | 1.000 | 0.950 | 0.883 |
+| vector_only | 1.000 | 1.000 | 0.950 | 0.883 |
+| filter_only | 1.000 | 0.662 | 0.367 | 0.662 |
+
+Production uses **`hybrid`** with **query rewriting** + **ingredient-overlap re-ranking** enabled (`retrieval.py`).
+
+### Retrieval best practices
+
+| Practice | Implementation |
+|---|---|
+| Hybrid search | Dense cosine vectors **plus** inventory `MatchText` payload filter (evaluated vs `vector_only` / `filter_only`) |
+| User query rewriting | `rewrite_query_for_retrieval()` expands fridge lists + diet into a richer embedding query (synonyms / cooking intent) |
+| Document re-ranking | Over-fetch `3×k` candidates, then `rerank_by_ingredient_overlap()` blends vector score with inventory coverage |
+
+Disable for experiments: `search_recipes_with_mode(..., rewrite_query=False, rerank=False)`.
+
+### LLM evaluation (offline A/B)
+
+`evaluate_llm.py` compares **multiple prompt approaches** on the same retrieved context, then scores each answer with the Gemini LLM-as-judge:
+
+| Approach | Intent |
+|---|---|
+| `grounded_structured` | Hard RAG constraints + structured sections + allergy discipline (production) |
+| `loose_creative` | Casual home-cook; may invent complementary ingredients |
+
+```bash
+python -u evaluate_llm.py --limit 4 --pause 2
+```
+
+**Latest run** (`evals/llm_results.json`, 3 queries, fixed groundedness rubric):
+
+| Approach | Overall | Groundedness | Relevance | Safety | n |
+|---|---:|---:|---:|---:|---:|
+| **grounded_structured** ★ | 4.33 | 4.00 | 4.33 | 5.00 | 3 |
+| loose_creative | 3.50 | 3.00 | 5.00 | 5.00 | 2* |
+
+\* `loose_creative` missed q03 due to Gemini free-tier quota; still trails on overall/groundedness. Production keeps `prompts.DEFAULT_APPROACH = "grounded_structured"`.
+
+`evaluate.py` remains available to judge **logged production** interactions in Postgres (`chefbot_evaluations`).
+
+Run production-log judging from the **project root**:
 
 ```bash
 cd "C:\Users\pc\Desktop\ChefBot AI"
@@ -169,22 +239,88 @@ python -u evaluate.py --limit 20
 
 ---
 
+## LLM Zoomcamp criteria map
+
+| Criterion | Where to look |
+|---|---|
+| Problem description | This README (problem + architecture) |
+| Retrieval flow | `retrieval.py` + Qdrant `chefbot_recipes` + Gemini |
+| Retrieval evaluation | `evaluate_retrieval.py`, `evals/retrieval_queries.json`, `evals/retrieval_results.json` |
+| LLM evaluation | `evaluate_llm.py` (prompt A/B) + `evaluate.py` (logged interactions) → `evals/llm_results.json` / `chefbot_evaluations` |
+| Interface | Streamlit `app.py` + FastAPI `main.py` |
+| Ingestion pipeline | `ingest.py` |
+| Monitoring + feedback | Postgres via `monitor.py`; thumbs in UI → `/api/feedback`; Streamlit Monitoring view (≥5 charts) |
+| Containerization | `docker-compose.yml` + `Dockerfile.api` + `Dockerfile.ui` (Postgres, Qdrant, API, UI) |
+| Reproducibility | Pinned `requirements.txt` (+ `requirements.lock.txt`); `prepare_dataset.py` + tracked `dataset/sample_recipes.jsonl` |
+| Best practices | Hybrid search (vector + inventory text filter); query rewrite + overlap re-rank in `retrieval.py` |
+
+---
+
+## Submission checklist (LLM Zoomcamp)
+
+Before you submit the repo + commit hash:
+
+1. [ ] `.env` is **not** committed (only `.env.example`)
+2. [ ] `pip install -r requirements.txt` (or `docker compose up --build -d`) works from a clean clone
+3. [ ] `python -u prepare_dataset.py --from-sample` then `python -u ingest.py` indexes the demo corpus
+4. [ ] UI generates a recipe, thumbs feedback saves, **Monitoring** view shows charts
+5. [ ] Offline evals present: `evals/retrieval_results.json`, `evals/llm_results.json`
+6. [ ] README criteria map matches the code at your submission commit
+7. [ ] Add screenshots under `docs/screenshots/` (Cook UI, Monitoring dashboard, sample answer) and link them below once saved
+8. [ ] Note the exact `git rev-parse HEAD` commit hash for the course form
+9. [ ] Review **3 peer projects** after submitting
+
+### Screenshots
+
+Drop images here (gitignored patterns do not apply under `docs/`):
+
+```text
+docs/screenshots/
+|-- cook-ui.png
+|-- monitoring-dashboard.png
+|-- sample-recipe.png
+```
+
+Then uncomment / add:
+
+```markdown
+![Cook UI](docs/screenshots/cook-ui.png)
+![Monitoring](docs/screenshots/monitoring-dashboard.png)
+![Sample recipe](docs/screenshots/sample-recipe.png)
+```
+
+---
+
 ## Repository layout
 
 ```text
 ChefBot AI/
-|-- app.py              # Streamlit UI (inventory, diets, live stream, feedback)
-|-- main.py             # FastAPI: /api/generate-recipe + /api/feedback
-|-- retrieval.py        # Async Qdrant search + Gemini embeddings (+ fallback)
-|-- ingest.py           # Batch embed + upsert into chefbot_recipes
-|-- monitor.py          # PostgreSQL interaction logging
-|-- evaluate.py         # Offline LLM-as-a-judge over logged interactions
+|-- app.py                 # Streamlit UI (inventory, diets, live stream, feedback)
+|-- main.py                # FastAPI: /api/generate-recipe + /api/feedback
+|-- retrieval.py           # Async Qdrant search + Gemini embeddings (+ fallback)
+|-- ingest.py              # Batch embed + upsert into chefbot_recipes
+|-- monitor.py             # PostgreSQL interaction logging
+|-- evaluate.py             # Offline LLM-as-a-judge over logged interactions
+|-- evaluate_retrieval.py   # Compare hybrid / vector_only / filter_only
+|-- evaluate_llm.py         # Prompt A/B with shared retrieval + LLM judge
+|-- prompts.py              # Prompt approaches; DEFAULT_APPROACH = production winner
+|-- evals/
+|   |-- retrieval_queries.json
+|   |-- retrieval_results.json  # From evaluate_retrieval.py
+|   `-- llm_results.json        # From evaluate_llm.py
+|-- prepare_dataset.py      # Fetch/copy recipe corpus for ingest
 |-- dataset/
-|   |-- recipes.json    # Primary structured dataset (JSONL)
-|   `-- recipes.csv     # Optional tabular twin (not used at runtime)
-|-- docker-compose.yml  # Local Postgres for monitoring (:5433)
-|-- requirements.txt
-|-- .env                # Secrets / service URLs (not committed)
+|   |-- README.md          # Data access + schema
+|   |-- sample_recipes.jsonl  # Tracked 200-recipe demo corpus
+|   |-- recipes.json       # Full/local dump (gitignored; via prepare_dataset.py)
+|   `-- recipes.csv        # Optional tabular twin (not used at runtime)
+|-- docker-compose.yml     # Full local stack: Postgres + Qdrant + API + UI
+|-- Dockerfile.api         # FastAPI / uvicorn image
+|-- Dockerfile.ui          # Streamlit image
+|-- .dockerignore
+|-- requirements.txt       # Pinned direct dependencies
+|-- requirements.lock.txt  # Full transitive pin set (optional)
+|-- .env                   # Secrets / service URLs (not committed)
 `-- .cursorrules
 ```
 
@@ -192,11 +328,10 @@ ChefBot AI/
 
 ## Prerequisites
 
-- Python **3.11+** (3.13 tested)
-- **Docker** (for local Postgres monitoring)
+- Python **3.11+** (3.13 tested) — optional if you run via Docker only
+- **Docker** + Docker Compose (full local stack)
 - A **Gemini API key** ([Google AI Studio](https://aistudio.google.com/))
-- A **Qdrant** instance (Cloud URL + API key, or local Docker on `:6333`)
-- Dataset file at `dataset/recipes.json` (or `dataset/2_Recipe_json.json`)
+- Dataset via `prepare_dataset.py` (tracked sample or full dump URL)
 
 ---
 
@@ -218,7 +353,34 @@ DATABASE_URL="postgresql://user:password@localhost:5433/chefbot_monitoring"
 | `QDRANT_URL` / `QDRANT_API_KEY` | Vector store for `chefbot_recipes` |
 | `CHEFBOT_API_URL` | Streamlit -> FastAPI base URL (local or Vercel) |
 | `DATABASE_URL` | Monitoring DB: local `docker compose` (`localhost:5433`) or hosted Supabase/Neon/Vercel Postgres (not Render) |
+| `CHEFBOT_DATASET_URL` | Optional HTTP(S) URL for `prepare_dataset.py` full corpus download |
 | `CORS_ORIGINS` | Comma-separated browser origins allowed by FastAPI CORS |
+
+---
+
+## Dataset (reproducibility)
+
+Full recipe dumps (~62k rows, ~80MB+) are **not** committed. Reviewers can still run end-to-end:
+
+```bash
+# Demo corpus (200 recipes, tracked in git)
+python -u prepare_dataset.py --from-sample
+
+# Or full dump you already have / host yourself
+# copy into dataset/recipes.json
+# or:
+python -u prepare_dataset.py --url "https://YOUR-HOST/recipes.jsonl" --force
+```
+
+Details and schema: [`dataset/README.md`](dataset/README.md).
+
+**Dependencies** are pinned in `requirements.txt`. For an exact transitive freeze (CI/repro machines):
+
+```bash
+pip install -r requirements.txt
+# optional stricter install:
+pip install -r requirements.lock.txt
+```
 
 ---
 
@@ -251,6 +413,48 @@ DATABASE_URL="postgresql://user:password@localhost:5433/chefbot_monitoring"
 
 ```bash
 cd "ChefBot AI"
+cp .env.example .env   # then set GEMINI_API_KEY
+python -u prepare_dataset.py --from-sample   # or use your full recipes.json
+```
+
+### Option A — full stack with Docker (recommended for reviewers)
+
+Brings up **Postgres**, **Qdrant**, **FastAPI**, and **Streamlit**:
+
+```bash
+docker compose up --build -d
+```
+
+| Service | URL |
+|---|---|
+| UI | [http://localhost:8501](http://localhost:8501) |
+| API | [http://localhost:8000/docs](http://localhost:8000/docs) |
+| Qdrant | [http://localhost:6333/dashboard](http://localhost:6333/dashboard) |
+| Postgres | `localhost:5433` (user/password/chefbot_monitoring) |
+
+Compose overrides `DATABASE_URL` / `QDRANT_URL` to Docker DNS (`postgres`, `qdrant`).  
+`GEMINI_API_KEY` is read from your host `.env`.
+
+Ingest once (from the host, against the compose Qdrant):
+
+```bash
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1   # or: source .venv/bin/activate
+pip install -r requirements.txt
+python -u prepare_dataset.py --from-sample   # skip if dataset/recipes.json already exists
+# Ensure .env has QDRANT_URL=http://localhost:6333 for host-side ingest
+python -u ingest.py
+```
+
+Stop the stack:
+
+```bash
+docker compose down
+```
+
+### Option B — local Python + compose dependencies
+
+```bash
 python -m venv .venv
 
 # Windows (PowerShell)
@@ -260,7 +464,7 @@ python -m venv .venv
 source .venv/Scripts/activate   # or: source .venv/bin/activate
 
 pip install -r requirements.txt
-docker compose up -d
+docker compose up -d postgres qdrant
 ```
 
 Confirm Postgres is healthy:
@@ -272,12 +476,12 @@ python -u monitor.py
 
 ---
 
-## Launch the stack
+## Launch the stack (Option B — without containerizing the apps)
 
-### 0. Start monitoring database
+### 0. Start Postgres + Qdrant
 
 ```bash
-docker compose up -d
+docker compose up -d postgres qdrant
 ```
 
 ### 1. Ingest recipes into Qdrant (once / when refreshing)

@@ -40,6 +40,7 @@ API_BASE_URL = resolve_api_base_url()
 GENERATE_URL = f"{API_BASE_URL}/api/generate-recipe"
 FEEDBACK_URL = f"{API_BASE_URL}/api/feedback"
 MONITORING_SUMMARY_URL = f"{API_BASE_URL}/api/monitoring/summary"
+MONITORING_DASHBOARD_URL = f"{API_BASE_URL}/api/monitoring/dashboard"
 
 DIET_OPTIONS = [
     "Vegetarian",
@@ -702,6 +703,197 @@ def fetch_monitoring_summary() -> dict[str, Any] | None:
         return None
 
 
+def fetch_monitoring_dashboard(days: int = 14) -> dict[str, Any] | None:
+    try:
+        response = httpx.get(
+            MONITORING_DASHBOARD_URL,
+            params={"days": days},
+            timeout=20.0,
+        )
+        if response.status_code >= 400:
+            return None
+        data = response.json()
+        return data if isinstance(data, dict) else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _rows_to_chart_frame(
+    rows: list[dict[str, Any]] | None,
+    *,
+    index_key: str,
+    value_key: str,
+    value_label: str | None = None,
+):
+    """Build a small chart table; returns None when empty."""
+    if not rows:
+        return None
+    try:
+        import pandas as pd
+    except ImportError:
+        return None
+
+    cleaned: list[dict[str, Any]] = []
+    label = value_label or value_key
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        index_val = row.get(index_key)
+        value = row.get(value_key)
+        if index_val is None or value is None:
+            continue
+        cleaned.append({index_key: str(index_val), label: float(value)})
+    if not cleaned:
+        return None
+    frame = pd.DataFrame(cleaned).set_index(index_key)
+    return frame
+
+
+def render_monitoring_dashboard() -> None:
+    """Zoomcamp monitoring surface: user feedback + ≥5 charts from Postgres."""
+    st.markdown(
+        """
+        <div class="section-head">
+          <p class="section-label">Monitoring</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    st.markdown("## Kitchen dashboard")
+    st.caption(
+        "Postgres interaction logs + LLM-as-judge scores. "
+        "User thumbs feedback is collected on every plated recipe."
+    )
+
+    days = st.slider("Lookback window (days)", min_value=3, max_value=30, value=14)
+    refresh = st.button("Refresh dashboard", use_container_width=False)
+    cache_key = f"monitoring_dashboard_{days}"
+    if refresh or cache_key not in st.session_state:
+        st.session_state[cache_key] = fetch_monitoring_dashboard(days)
+
+    payload = st.session_state.get(cache_key)
+    if not payload:
+        st.warning(
+            "Monitoring dashboard unavailable. Confirm the API is up and "
+            "`DATABASE_URL` points at Postgres."
+        )
+        return
+
+    summary = payload.get("summary") or {}
+    interactions = summary.get("interactions") or {}
+    evaluations = summary.get("evaluations") or {}
+    charts = payload.get("charts") or {}
+
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Plates logged", interactions.get("interactions", 0))
+    m2.metric("Avg latency (ms)", interactions.get("avg_latency_ms") or "—")
+    m3.metric(
+        "Thumbs",
+        f"↑{interactions.get('thumbs_up', 0)} / ↓{interactions.get('thumbs_down', 0)}",
+    )
+    m4.metric("Judge scored", evaluations.get("evaluations", 0))
+
+    st.divider()
+    c1, c2 = st.columns(2)
+
+    with c1:
+        st.markdown("##### 1. Interactions / day")
+        frame = _rows_to_chart_frame(
+            charts.get("interactions_per_day"),
+            index_key="day",
+            value_key="interactions",
+            value_label="interactions",
+        )
+        if frame is None:
+            st.caption("No interaction volume yet.")
+        else:
+            st.bar_chart(frame, height=220)
+
+    with c2:
+        st.markdown("##### 2. Avg latency / day")
+        frame = _rows_to_chart_frame(
+            charts.get("avg_latency_per_day"),
+            index_key="day",
+            value_key="avg_latency_ms",
+            value_label="avg_latency_ms",
+        )
+        if frame is None:
+            st.caption("No latency samples yet.")
+        else:
+            st.line_chart(frame, height=220)
+
+    c3, c4 = st.columns(2)
+    with c3:
+        st.markdown("##### 3. Status breakdown")
+        frame = _rows_to_chart_frame(
+            charts.get("status_breakdown"),
+            index_key="status",
+            value_key="count",
+            value_label="count",
+        )
+        if frame is None:
+            st.caption("No status rows yet.")
+        else:
+            st.bar_chart(frame, height=220)
+
+    with c4:
+        st.markdown("##### 4. Feedback breakdown")
+        frame = _rows_to_chart_frame(
+            charts.get("feedback_breakdown"),
+            index_key="feedback",
+            value_key="count",
+            value_label="count",
+        )
+        if frame is None:
+            st.caption("No feedback rows yet.")
+        else:
+            st.bar_chart(frame, height=220)
+
+    c5, c6 = st.columns(2)
+    with c5:
+        st.markdown("##### 5. Judge verdicts")
+        frame = _rows_to_chart_frame(
+            charts.get("judge_verdicts"),
+            index_key="verdict",
+            value_key="count",
+            value_label="count",
+        )
+        if frame is None:
+            st.caption("Run `evaluate.py` to populate judge verdicts.")
+        else:
+            st.bar_chart(frame, height=220)
+
+    with c6:
+        st.markdown("##### 6. Judge score averages")
+        frame = _rows_to_chart_frame(
+            charts.get("judge_score_averages"),
+            index_key="metric",
+            value_key="score",
+            value_label="score",
+        )
+        if frame is None:
+            st.caption("No judge scores yet.")
+        else:
+            st.bar_chart(frame, height=220)
+
+    st.markdown("##### 7. Feedback rate / day")
+    frame = _rows_to_chart_frame(
+        charts.get("feedback_rate_per_day"),
+        index_key="day",
+        value_key="feedback_rate",
+        value_label="feedback_rate",
+    )
+    if frame is None:
+        st.caption("No daily feedback rate yet.")
+    else:
+        st.line_chart(frame, height=220)
+
+    st.caption(
+        f"Window: last {payload.get('window_days', days)} days · "
+        f"source={payload.get('source', 'postgres')}"
+    )
+
+
 def push_history(recipe_text: str, payload: dict[str, Any]) -> None:
     title, _ = extract_dish_title(split_recipe_and_macros(recipe_text)[0])
     entry = {
@@ -805,6 +997,15 @@ inject_sidebar_swipe()
 
 # --- Sidebar: preferences & history ---
 with st.sidebar:
+    st.markdown("### Navigate")
+    st.radio(
+        "View",
+        options=["Cook", "Monitoring"],
+        key="app_view",
+        horizontal=True,
+        label_visibility="collapsed",
+    )
+    st.divider()
     st.markdown("### Experience")
     st.markdown(
         '<p class="pref-hint">On mobile, swipe right from the left edge to open this menu; swipe left to close.</p>',
@@ -856,9 +1057,12 @@ with st.sidebar:
 
     st.divider()
     st.markdown("### Kitchen metrics")
-    st.caption("Zoomcamp-style logs in Postgres — not Grafana.")
+    st.caption("Open Monitoring view for the full chart dashboard.")
     if st.button("Refresh metrics", use_container_width=True):
         st.session_state.pop("monitoring_summary", None)
+        for key in list(st.session_state.keys()):
+            if str(key).startswith("monitoring_dashboard_"):
+                st.session_state.pop(key, None)
     if "monitoring_summary" not in st.session_state:
         st.session_state["monitoring_summary"] = fetch_monitoring_summary()
     summary = st.session_state.get("monitoring_summary")
@@ -918,6 +1122,14 @@ with st.sidebar:
                         d.strip() for d in diets.split(",") if d.strip()
                     ]
                     st.rerun()
+
+if st.session_state.get("app_view", "Cook") == "Monitoring":
+    render_monitoring_dashboard()
+    st.markdown(
+        '<p class="foot">ChefBot AI · monitoring dashboard · thumbs feedback + Postgres charts</p>',
+        unsafe_allow_html=True,
+    )
+    st.stop()
 
 st.markdown(
     f'<div class="topbar"><span class="topbar-meta">{layout} layout</span></div>',

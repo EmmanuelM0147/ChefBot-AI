@@ -1,9 +1,9 @@
 """
 Async recipe retrieval over the ChefBot Qdrant collection.
 
-Embeds the caller's inventory + dietary preferences with Gemini, then runs a
-cosine similarity search with a payload filter so results must mention at least
-one inventory ingredient.
+Embeds a *rewritten* inventory + diet query with Gemini, runs cosine search
+with an inventory text filter (hybrid), then *re-ranks* candidates by
+ingredient overlap before returning top-k.
 
 When Gemini embedding quota is exhausted, falls back to ingredient-filter-only
 retrieval so the app remains usable on free tier.
@@ -17,7 +17,7 @@ import os
 import re
 from collections import OrderedDict
 from functools import lru_cache
-from typing import Any, TypedDict
+from typing import Any, Literal, TypedDict
 
 from dotenv import load_dotenv
 from google import genai
@@ -38,6 +38,37 @@ EMBEDDING_MODEL = "gemini-embedding-001"
 VECTOR_SIZE = 768
 MAX_EMBED_RETRIES = 3
 QUERY_VECTOR_CACHE_MAX = 512
+# Over-fetch factor before ingredient-overlap re-ranking.
+RERANK_CANDIDATE_MULTIPLIER = 3
+
+# Production default (winner of offline retrieval eval — see evaluate_retrieval.py).
+RetrievalMode = Literal["hybrid", "vector_only", "filter_only"]
+DEFAULT_RETRIEVAL_MODE: RetrievalMode = "hybrid"
+
+# Light culinary expansions used by query rewriting (no extra LLM call).
+_INGREDIENT_EXPANSIONS: dict[str, tuple[str, ...]] = {
+    "chicken": ("poultry", "roast chicken", "chicken breast"),
+    "beef": ("ground beef", "steak", "braised beef"),
+    "pork": ("pork chop", "pulled pork"),
+    "salmon": ("fish", "seafood", "baked salmon"),
+    "shrimp": ("prawns", "seafood", "garlic shrimp"),
+    "tofu": ("soy", "plant protein", "stir fry"),
+    "eggs": ("omelet", "frittata", "breakfast"),
+    "egg": ("omelet", "frittata"),
+    "pasta": ("noodles", "spaghetti", "italian"),
+    "rice": ("fried rice", "grain bowl", "pilaf"),
+    "tomato": ("tomatoes", "marinara", "tomato sauce"),
+    "tomatoes": ("tomato", "marinara"),
+    "garlic": ("aromatics", "garlic butter"),
+    "lemon": ("citrus", "lemon zest"),
+    "spinach": ("greens", "leafy vegetables"),
+    "mushroom": ("mushrooms", "umami"),
+    "mushrooms": ("mushroom", "umami"),
+    "chickpeas": ("hummus", "legumes"),
+    "lentils": ("legumes", "soup"),
+    "potato": ("potatoes", "roast potatoes"),
+    "potatoes": ("potato", "mash"),
+}
 
 # Bounded LRU: identical inventory/diet queries skip another embed call.
 _QUERY_VECTOR_CACHE: OrderedDict[str, list[float]] = OrderedDict()
@@ -84,16 +115,27 @@ async def close_qdrant_client() -> None:
     get_qdrant_client.cache_clear()
 
 
+def clean_ingredients(user_ingredients: list) -> list[str]:
+    cleaned: list[str] = []
+    seen: set[str] = set()
+    for raw in user_ingredients or []:
+        if not isinstance(raw, str):
+            continue
+        item = raw.strip()
+        key = item.lower()
+        if not item or key in seen:
+            continue
+        seen.add(key)
+        cleaned.append(item)
+    return cleaned
+
+
 def build_query_context(
     user_ingredients: list[str],
     dietary_preferences: str,
 ) -> str:
-    """Combine inventory + diet into one embedding-friendly query string."""
-    cleaned_ingredients = [
-        ingredient.strip()
-        for ingredient in user_ingredients
-        if isinstance(ingredient, str) and ingredient.strip()
-    ]
+    """Baseline (non-rewritten) inventory + diet query string."""
+    cleaned_ingredients = clean_ingredients(user_ingredients)
     inventory = ", ".join(cleaned_ingredients) if cleaned_ingredients else "none listed"
     diet = (dietary_preferences or "").strip() or "none specified"
     return (
@@ -101,6 +143,104 @@ def build_query_context(
         f"Dietary preferences: {diet}\n"
         f"Find recipes that can be cooked with these ingredients."
     )
+
+
+def rewrite_query_for_retrieval(
+    user_ingredients: list[str],
+    dietary_preferences: str,
+) -> str:
+    """
+    Rewrite a sparse fridge list into a retrieval-oriented natural-language query.
+
+    Expands ingredients with light culinary synonyms and turns diet flags into
+    explicit constraints so the embedding query carries clearer cooking intent.
+    """
+    ingredients = clean_ingredients(user_ingredients)
+    diet = (dietary_preferences or "").strip()
+
+    expansions: list[str] = []
+    for item in ingredients:
+        for alias in _INGREDIENT_EXPANSIONS.get(item.lower(), ()):
+            if alias not in expansions and alias.lower() not in {
+                i.lower() for i in ingredients
+            }:
+                expansions.append(alias)
+
+    inventory = ", ".join(ingredients) if ingredients else "common pantry staples"
+    expansion_text = ", ".join(expansions[:8]) if expansions else inventory
+    diet_clause = (
+        f"Hard dietary constraints: {diet}. Exclude recipes that violate these."
+        if diet
+        else "No special dietary constraints."
+    )
+    return (
+        f"Find a practical home-cooked recipe that uses these fridge ingredients: "
+        f"{inventory}. "
+        f"Related culinary search terms: {expansion_text}. "
+        f"{diet_clause} "
+        f"Prefer recipes where many inventory ingredients appear together."
+    )
+
+
+def ingredient_overlap_score(
+    user_ingredients: list[str],
+    recipe: RecipeResult,
+) -> float:
+    """Fraction of inventory tokens found in the recipe ingredients text."""
+    ingredients = clean_ingredients(user_ingredients)
+    if not ingredients:
+        return 0.0
+    blob = " ".join(str(x).lower() for x in (recipe.get("ingredients") or []))
+    hits = sum(1 for item in ingredients if item.lower() in blob)
+    return hits / len(ingredients)
+
+
+def rerank_by_ingredient_overlap(
+    recipes: list[RecipeResult],
+    user_ingredients: list[str],
+    *,
+    limit: int,
+    vector_weight: float = 0.35,
+    overlap_weight: float = 0.65,
+) -> list[RecipeResult]:
+    """
+    Second-stage re-ranking: blend vector similarity with inventory overlap.
+
+    Overlap is weighted higher so recipes covering more fridge items beat
+    semantically close but poorly matched candidates.
+    """
+    if limit < 1:
+        raise ValueError("limit must be >= 1")
+    if not recipes:
+        return []
+
+    vector_scores = [
+        float(recipe["score"])
+        for recipe in recipes
+        if recipe.get("score") is not None
+    ]
+    if vector_scores:
+        min_v = min(vector_scores)
+        max_v = max(vector_scores)
+        span = (max_v - min_v) or 1.0
+    else:
+        min_v, span = 0.0, 1.0
+
+    ranked: list[tuple[float, RecipeResult]] = []
+    for recipe in recipes:
+        raw_vector = recipe.get("score")
+        if raw_vector is None:
+            vector_norm = 0.0
+        else:
+            vector_norm = (float(raw_vector) - min_v) / span
+        overlap = ingredient_overlap_score(user_ingredients, recipe)
+        combined = (vector_weight * vector_norm) + (overlap_weight * overlap)
+        reranked = dict(recipe)
+        reranked["score"] = round(combined, 6)
+        ranked.append((combined, reranked))  # type: ignore[arg-type]
+
+    ranked.sort(key=lambda item: item[0], reverse=True)
+    return [recipe for _, recipe in ranked[:limit]]
 
 
 def build_ingredient_filter(user_ingredients: list[str]) -> Filter | None:
@@ -277,49 +417,97 @@ def _format_hit(point: Any) -> RecipeResult:
     }
 
 
+async def search_recipes_with_mode(
+    user_ingredients: list,
+    dietary_preferences: str,
+    *,
+    limit: int = 5,
+    mode: RetrievalMode = DEFAULT_RETRIEVAL_MODE,
+    allow_embed_fallback: bool = False,
+    rewrite_query: bool = True,
+    rerank: bool = True,
+) -> list[RecipeResult]:
+    """
+    Run one explicit retrieval strategy (used by production + offline eval).
+
+    Modes:
+    - hybrid: cosine rank over recipes that mention ≥1 inventory ingredient
+    - vector_only: cosine rank with no inventory filter
+    - filter_only: inventory MatchText filter, no vector ranking
+
+    Best-practice extras (on by default for production):
+    - rewrite_query: expand inventory/diet into a richer retrieval query
+    - rerank: over-fetch candidates, then re-rank by inventory overlap
+    """
+    if limit < 1:
+        raise ValueError("limit must be >= 1")
+    if mode not in ("hybrid", "vector_only", "filter_only"):
+        raise ValueError(f"Unknown retrieval mode: {mode}")
+
+    ingredients = clean_ingredients(list(user_ingredients or []))
+    if rewrite_query:
+        query_text = rewrite_query_for_retrieval(ingredients, dietary_preferences)
+    else:
+        query_text = build_query_context(ingredients, dietary_preferences)
+    query_filter = build_ingredient_filter(ingredients)
+
+    fetch_limit = limit
+    if rerank:
+        fetch_limit = max(limit, limit * RERANK_CANDIDATE_MULTIPLIER)
+
+    qdrant = get_qdrant_client()
+    if query_filter is not None and mode in ("hybrid", "filter_only"):
+        await _ensure_ingredients_text_index(qdrant)
+
+    if mode == "filter_only":
+        results = await _filter_only_search(qdrant, query_filter, fetch_limit)
+        if rerank:
+            return rerank_by_ingredient_overlap(results, ingredients, limit=limit)
+        return results[:limit]
+
+    try:
+        query_vector = await embed_query(query_text)
+    except Exception as exc:
+        if allow_embed_fallback and is_quota_error(exc):
+            results = await _filter_only_search(qdrant, query_filter, fetch_limit)
+            if rerank:
+                return rerank_by_ingredient_overlap(results, ingredients, limit=limit)
+            return results[:limit]
+        raise
+
+    response = await qdrant.query_points(
+        collection_name=COLLECTION_NAME,
+        query=query_vector,
+        query_filter=query_filter if mode == "hybrid" else None,
+        limit=fetch_limit,
+        with_payload=True,
+    )
+    results = [_format_hit(point) for point in response.points]
+    if rerank:
+        return rerank_by_ingredient_overlap(results, ingredients, limit=limit)
+    return results[:limit]
+
+
 async def search_recipes(
     user_ingredients: list,
     dietary_preferences: str,
     limit: int = 5,
 ) -> list[RecipeResult]:
     """
-    Semantic recipe search constrained to the caller's inventory.
-
-    1. Embed ingredients + dietary preferences as one query context.
-    2. Filter Qdrant payloads so at least one inventory ingredient appears in
-       the recipe `ingredients` array.
-    3. Rank remaining candidates by cosine similarity and return top `limit`.
+    Production search: hybrid retrieval + query rewrite + overlap re-rank.
 
     If Gemini embedding quota is exhausted, degrade gracefully to filter-only
-    retrieval so generation can still proceed from inventory matches.
+    so generation can still proceed from inventory matches.
     """
-    if limit < 1:
-        raise ValueError("limit must be >= 1")
-
-    ingredients = list(user_ingredients or [])
-    query_text = build_query_context(ingredients, dietary_preferences)
-    query_filter = build_ingredient_filter(ingredients)
-
-    qdrant = get_qdrant_client()
-    if query_filter is not None:
-        await _ensure_ingredients_text_index(qdrant)
-
-    try:
-        query_vector = await embed_query(query_text)
-    except Exception as exc:
-        if not is_quota_error(exc):
-            raise
-        # Free-tier embed quota exhausted - still return usable context.
-        return await _filter_only_search(qdrant, query_filter, limit)
-
-    results = await qdrant.query_points(
-        collection_name=COLLECTION_NAME,
-        query=query_vector,
-        query_filter=query_filter,
+    return await search_recipes_with_mode(
+        user_ingredients,
+        dietary_preferences,
         limit=limit,
-        with_payload=True,
+        mode=DEFAULT_RETRIEVAL_MODE,
+        allow_embed_fallback=True,
+        rewrite_query=True,
+        rerank=True,
     )
-    return [_format_hit(point) for point in results.points]
 
 
 async def main() -> None:

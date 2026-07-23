@@ -16,5 +16,49 @@ services:
       timeout: 5s
       retries: 10
 
+  qdrant:
+    image: qdrant/qdrant:v1.13.2
+    container_name: chefbot-qdrant
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - chefbot_qdrant:/qdrant/storage
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    container_name: chefbot-api
+    env_file:
+      - .env
+    environment:
+      # Docker network hostnames override any localhost URLs from .env
+      DATABASE_URL: postgresql://user:password@postgres:5432/chefbot_monitoring
+      QDRANT_URL: http://qdrant:6333
+      QDRANT_API_KEY: ""
+      CORS_ORIGINS: http://localhost:8501,http://127.0.0.1:8501
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      qdrant:
+        condition: service_started
+
+  ui:
+    build:
+      context: .
+      dockerfile: Dockerfile.ui
+    container_name: chefbot-ui
+    environment:
+      # Streamlit server calls the API over the compose network
+      CHEFBOT_API_URL: http://api:8000
+    ports:
+      - "8501:8501"
+    depends_on:
+      - api
+
 volumes:
   chefbot_pgdata:
+  chefbot_qdrant:

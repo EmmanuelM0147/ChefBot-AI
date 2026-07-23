@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Secrets & local env (compose mounts/reads from host via env_file)
+.env
+.env.*
+!.env.example
+
+# Data & VCS (keep images lean; ingest into Qdrant separately)
+.git/
+.gitignore
+dataset/*.json
+dataset/*.csv
+dataset/*.jsonl
+*.md
+!README.md
+
+# Tooling / IDE
+.cursor/
+.claude/
+.github/
+.devcontainer/
+agent-transcripts/
+evals/retrieval_results.json
+evals/llm_results.json
+
+# Misc
+*.log
+.DS_Store
+Thumbs.db

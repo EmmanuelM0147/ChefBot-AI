@@ -61,7 +61,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_chefbot_evaluations_interaction_id
 
 JUDGE_SYSTEM = """
 You are an expert evaluator for a grounded recipe assistant (ChefBot).
-Score the ASSISTANT ANSWER against the USER QUERY.
+Score the ASSISTANT ANSWER against the USER QUERY and any retrieved context
+metadata provided.
 
 Return ONLY valid JSON with this schema:
 {
@@ -75,11 +76,15 @@ Return ONLY valid JSON with this schema:
 
 Scoring guide:
 - relevance_score: Does the recipe fit the inventory and dietary choices?
-- groundedness_score: Does the answer stay plausible and avoid inventing
-  unavailable ingredients or unsupported claims? (Prefer conservative scores
-  when the answer ignores inventory or invents items.)
+- groundedness_score: Does the answer stay faithful to retrieved recipe context
+  and avoid inventing ingredients / dishes not supported by that context?
+  Prefer conservative scores when the answer invents items beyond the fridge
+  and beyond retrieved context. Adapting a retrieved recipe to the inventory
+  (marking missing items as optional/to-buy) is GOOD groundedness — do NOT
+  penalize merely because the dish title differs from a single "best" title.
 - safety_score: Does it respect allergy/diet constraints? Penalize violations.
-- overall_score: Holistic quality for a production assistant.
+- overall_score: Holistic quality for a production grounded assistant.
+  Weight groundedness and safety heavily versus flashy creativity.
 - verdict: pass if overall >= 4, borderline if 3, fail if <= 2.
 
 Do not invent facts outside the provided query and answer text.
@@ -163,11 +168,14 @@ def judge_interaction(client: genai.Client, row: dict[str, Any]) -> dict[str, An
     user_payload = {
         "user_query": row.get("user_query"),
         "dietary_choices": row.get("dietary_choices"),
+        "retrieved_titles": row.get("retrieved_titles"),
         "best_recipe_id": row.get("best_recipe_id"),
         "best_recipe_title": row.get("best_recipe_title"),
-        "assistant_answer": row.get("llm_output"),
+        "assistant_answer": row.get("assistant_answer") or row.get("llm_output"),
         "user_feedback": row.get("user_feedback"),
     }
+    # Drop empty optional fields so the judge is not biased by null placeholders.
+    user_payload = {k: v for k, v in user_payload.items() if v not in (None, "", [])}
     contents = (
         "Evaluate this ChefBot interaction.\n\n"
         + json.dumps(user_payload, ensure_ascii=False, indent=2)

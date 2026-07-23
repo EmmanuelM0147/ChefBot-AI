@@ -24,11 +24,14 @@ Thumbs.db
 *.swp
 *.swo
 
-# Local data (large recipe dumps; keep folder via .gitkeep)
+# Local data (large recipe dumps; keep sample + docs tracked)
 dataset/*.json
 dataset/*.csv
 dataset/*.zip
+dataset/*.jsonl
 !dataset/.gitkeep
+!dataset/README.md
+!dataset/sample_recipes.jsonl
 
 # Logs / temp
 *.log

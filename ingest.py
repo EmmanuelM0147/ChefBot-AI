@@ -37,7 +37,9 @@ MAX_EMBED_RETRIES = 6
 DATA_CANDIDATES = (
     Path("dataset/2_Recipe_json.json"),
     Path("dataset/recipes.json"),
+    Path("dataset/sample_recipes.jsonl"),
 )
+
 
 
 def resolve_dataset_path() -> Path:
