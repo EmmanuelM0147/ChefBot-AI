@@ -257,20 +257,17 @@ Retrieval extras: hybrid search (vector + ingredient text filter), query rewrite
 
 ### Screenshots
 
-Add captures under `docs/screenshots/` if you want them in the README:
+Cook view — fridge inventory form and starter chips:
 
-```text
-docs/screenshots/
-|-- cook-ui.png
-|-- monitoring-dashboard.png
-|-- sample-recipe.png
-```
-
-```markdown
 ![Cook UI](docs/screenshots/cook-ui.png)
+
+Monitoring — Postgres metrics and charts from logged plates:
+
 ![Monitoring](docs/screenshots/monitoring-dashboard.png)
+
+A generated plate (ingredients, method, and estimated macros):
+
 ![Sample recipe](docs/screenshots/sample-recipe.png)
-```
 
 ---
 
