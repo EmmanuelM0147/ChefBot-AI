@@ -1,5 +1,5 @@
 """
-LLM-as-a-judge evaluation for ChefBot interactions (Zoomcamp-style offline eval).
+LLM-as-a-judge evaluation for logged ChefBot interactions.
 
 Reads rows from chefbot_interactions, scores each answer with Gemini, and stores
 results in chefbot_evaluations.

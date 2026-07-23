@@ -1,5 +1,5 @@
 """
-Offline retrieval evaluation for ChefBot (Zoomcamp-style).
+Offline retrieval evaluation for ChefBot.
 
 Compares multiple retrieval approaches on a fixed inventory query set and
 reports Hit@k, MRR, Precision@k, and mean ingredient coverage.
@@ -337,7 +337,6 @@ def main(argv: list[str] | None = None) -> int:
     print_report(report)
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
-    # Drop per-query title lists from a slim copy? Keep full details for reviewers.
     args.out.write_text(json.dumps(report, indent=2), encoding="utf-8")
     print(f"\nWrote {args.out}")
     return 0

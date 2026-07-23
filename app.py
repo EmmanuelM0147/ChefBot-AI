@@ -750,7 +750,7 @@ def _rows_to_chart_frame(
 
 
 def render_monitoring_dashboard() -> None:
-    """Zoomcamp monitoring surface: user feedback + ≥5 charts from Postgres."""
+    """Monitoring page: feedback stats and charts from Postgres."""
     st.markdown(
         """
         <div class="section-head">
@@ -1126,7 +1126,7 @@ with st.sidebar:
 if st.session_state.get("app_view", "Cook") == "Monitoring":
     render_monitoring_dashboard()
     st.markdown(
-        '<p class="foot">ChefBot AI · monitoring dashboard · thumbs feedback + Postgres charts</p>',
+        '<p class="foot">ChefBot AI · recipe logs · feedback</p>',
         unsafe_allow_html=True,
     )
     st.stop()
@@ -1140,11 +1140,10 @@ st.markdown(
 st.markdown(
     """
     <div class="hero">
-      <div class="hero-kicker"><span class="dot"></span> Grounded kitchen AI</div>
       <p class="hero-brand">ChefBot AI</p>
       <p class="hero-sub">
-        Tell us what's in your fridge. We'll stream a grounded, allergen-aware
-        recipe from real cookbook context - not invented pantry magic.
+        Enter what’s in your fridge and any diet limits. ChefBot looks up real
+        recipes from the cookbook index and streams one adapted plate.
       </p>
     </div>
     """,
@@ -1233,10 +1232,10 @@ elif not submitted:
     st.markdown(
         """
         <div class="empty-stage">
-          <h3>Your next plate starts here</h3>
+          <h3>Start with your fridge</h3>
           <p>
-            Add a few fridge staples, set any diet constraints, then generate.
-            Use the sidebar menu for layout, text size, and recent plates.
+            List a few ingredients, set any diet constraints, then generate.
+            Layout and recent plates are in the sidebar.
           </p>
         </div>
         """,
@@ -1263,6 +1262,6 @@ if st.session_state.get("show_feedback") and st.session_state.get("last_recipe")
     st.markdown("</div>", unsafe_allow_html=True)
 
 st.markdown(
-    '<p class="foot">ChefBot AI · grounded recipes · allergen-aware · preferences in the sidebar</p>',
+    '<p class="foot">ChefBot AI</p>',
     unsafe_allow_html=True,
 )

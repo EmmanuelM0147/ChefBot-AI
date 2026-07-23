@@ -1,8 +1,8 @@
 # ChefBot AI
 
-Grounded, inventory-aware recipe generation with **FastAPI**, **Qdrant**, **Gemini**, **PostgreSQL monitoring**, and a **Streamlit** UI.
+Inventory-aware recipe app built with FastAPI, Qdrant, Gemini, PostgreSQL, and Streamlit.
 
-ChefBot retrieves real recipes from a vector index, constrains generation to that context, streams the answer with **Gemini 2.5 Flash**, appends **tool-calculated** macro estimates, and logs every transaction for evaluation.
+Given what’s in the fridge (and any diet limits), ChefBot retrieves matching recipes from a vector index, generates an adapted dish with Gemini, appends tool-calculated macros, and logs each run for later review.
 
 ---
 
@@ -108,7 +108,7 @@ Gemini free-tier embed limits can block search (HTTP 429). ChefBot handles this 
 
 ## Monitoring (PostgreSQL)
 
-`monitor.py` follows the LLM Zoomcamp pattern: a local Postgres table that records each generation for later evaluation.
+`monitor.py` writes each generation to Postgres so you can inspect latency, feedback, and outputs later.
 
 **Table:** `chefbot_interactions`
 
@@ -137,13 +137,13 @@ python -u monitor.py   # optional smoke test: creates table + sample row
 
 Use a hosted Postgres provider for live logs. Preferred: **Supabase**, **Neon**, or **Vercel Postgres**. Do **not** use Render for this project.
 
-**Monitoring plan:** Zoomcamp-style Postgres tables are the source of truth.
+**Monitoring:** Postgres tables hold the logs.
 
 - `chefbot_interactions` — every generation + feedback + latency
-- `chefbot_evaluations` — offline LLM-as-a-judge scores
+- `chefbot_evaluations` — offline judge scores
 - thumbs feedback on every plate (`/api/feedback`)
 - compact sidebar metrics via `GET /api/monitoring/summary`
-- Streamlit **Monitoring** dashboard (≥5 charts) via `GET /api/monitoring/dashboard`
+- Streamlit **Monitoring** view via `GET /api/monitoring/dashboard`
 
 1. Create a free Postgres project (Supabase is fine).
 2. Copy the **connection pooler** URI (Supabase transaction mode is typically port `6543`).
@@ -192,7 +192,7 @@ python -u evaluate_retrieval.py --k 5 --min-hits 2
 
 Production uses **`hybrid`** with **query rewriting** + **ingredient-overlap re-ranking** enabled (`retrieval.py`).
 
-### Retrieval best practices
+### Retrieval extras
 
 | Practice | Implementation |
 |---|---|
@@ -202,9 +202,9 @@ Production uses **`hybrid`** with **query rewriting** + **ingredient-overlap re-
 
 Disable for experiments: `search_recipes_with_mode(..., rewrite_query=False, rerank=False)`.
 
-### LLM evaluation (offline A/B)
+### Prompt comparison (offline)
 
-`evaluate_llm.py` compares **multiple prompt approaches** on the same retrieved context, then scores each answer with the Gemini LLM-as-judge:
+`evaluate_llm.py` compares two system prompts on the same retrieved context, then scores each answer with a Gemini judge:
 
 | Approach | Intent |
 |---|---|
@@ -215,7 +215,7 @@ Disable for experiments: `search_recipes_with_mode(..., rewrite_query=False, rer
 python -u evaluate_llm.py --limit 4 --pause 2
 ```
 
-**Latest run** (`evals/llm_results.json`, 3 queries, fixed groundedness rubric):
+**Latest run** (`evals/llm_results.json`, 3 queries):
 
 | Approach | Overall | Groundedness | Relevance | Safety | n |
 |---|---:|---:|---:|---:|---:|
@@ -239,40 +239,25 @@ python -u evaluate.py --limit 20
 
 ---
 
-## LLM Zoomcamp criteria map
+## What’s in the repo
 
-| Criterion | Where to look |
+| Area | Main files |
 |---|---|
-| Problem description | This README (problem + architecture) |
-| Retrieval flow | `retrieval.py` + Qdrant `chefbot_recipes` + Gemini |
-| Retrieval evaluation | `evaluate_retrieval.py`, `evals/retrieval_queries.json`, `evals/retrieval_results.json` |
-| LLM evaluation | `evaluate_llm.py` (prompt A/B) + `evaluate.py` (logged interactions) → `evals/llm_results.json` / `chefbot_evaluations` |
-| Interface | Streamlit `app.py` + FastAPI `main.py` |
-| Ingestion pipeline | `ingest.py` |
-| Monitoring + feedback | Postgres via `monitor.py`; thumbs in UI → `/api/feedback`; Streamlit Monitoring view (≥5 charts) |
-| Containerization | `docker-compose.yml` + `Dockerfile.api` + `Dockerfile.ui` (Postgres, Qdrant, API, UI) |
-| Reproducibility | Pinned `requirements.txt` (+ `requirements.lock.txt`); `prepare_dataset.py` + tracked `dataset/sample_recipes.jsonl` |
-| Best practices | Hybrid search (vector + inventory text filter); query rewrite + overlap re-rank in `retrieval.py` |
+| Problem / flow | This README |
+| Retrieval | `retrieval.py`, Qdrant `chefbot_recipes` |
+| Retrieval eval | `evaluate_retrieval.py`, `evals/` |
+| Generation eval | `evaluate_llm.py`, `evaluate.py` |
+| UI / API | `app.py`, `main.py` |
+| Ingest | `ingest.py`, `prepare_dataset.py` |
+| Monitoring | `monitor.py`, Streamlit Monitoring view |
+| Docker | `docker-compose.yml`, `Dockerfile.api`, `Dockerfile.ui` |
+| Deps / data | `requirements.txt`, `dataset/sample_recipes.jsonl` |
 
----
-
-## Submission checklist (LLM Zoomcamp)
-
-Before you submit the repo + commit hash:
-
-1. [ ] `.env` is **not** committed (only `.env.example`)
-2. [ ] `pip install -r requirements.txt` (or `docker compose up --build -d`) works from a clean clone
-3. [ ] `python -u prepare_dataset.py --from-sample` then `python -u ingest.py` indexes the demo corpus
-4. [ ] UI generates a recipe, thumbs feedback saves, **Monitoring** view shows charts
-5. [ ] Offline evals present: `evals/retrieval_results.json`, `evals/llm_results.json`
-6. [ ] README criteria map matches the code at your submission commit
-7. [ ] Add screenshots under `docs/screenshots/` (Cook UI, Monitoring dashboard, sample answer) and link them below once saved
-8. [ ] Note the exact `git rev-parse HEAD` commit hash for the course form
-9. [ ] Review **3 peer projects** after submitting
+Retrieval extras: hybrid search (vector + ingredient text filter), query rewrite, and overlap re-ranking.
 
 ### Screenshots
 
-Drop images here (gitignored patterns do not apply under `docs/`):
+Add captures under `docs/screenshots/` if you want them in the README:
 
 ```text
 docs/screenshots/
@@ -280,8 +265,6 @@ docs/screenshots/
 |-- monitoring-dashboard.png
 |-- sample-recipe.png
 ```
-
-Then uncomment / add:
 
 ```markdown
 ![Cook UI](docs/screenshots/cook-ui.png)
@@ -302,7 +285,7 @@ ChefBot AI/
 |-- monitor.py             # PostgreSQL interaction logging
 |-- evaluate.py             # Offline LLM-as-a-judge over logged interactions
 |-- evaluate_retrieval.py   # Compare hybrid / vector_only / filter_only
-|-- evaluate_llm.py         # Prompt A/B with shared retrieval + LLM judge
+|-- evaluate_llm.py         # Prompt comparison with shared retrieval + judge
 |-- prompts.py              # Prompt approaches; DEFAULT_APPROACH = production winner
 |-- evals/
 |   |-- retrieval_queries.json
@@ -320,8 +303,7 @@ ChefBot AI/
 |-- .dockerignore
 |-- requirements.txt       # Pinned direct dependencies
 |-- requirements.lock.txt  # Full transitive pin set (optional)
-|-- .env                   # Secrets / service URLs (not committed)
-`-- .cursorrules
+`-- .env                   # Secrets / service URLs (not committed)
 ```
 
 ---
@@ -360,7 +342,7 @@ DATABASE_URL="postgresql://user:password@localhost:5433/chefbot_monitoring"
 
 ## Dataset (reproducibility)
 
-Full recipe dumps (~62k rows, ~80MB+) are **not** committed. Reviewers can still run end-to-end:
+Full recipe dumps (~62k rows, ~80MB+) are **not** committed. To run locally:
 
 ```bash
 # Demo corpus (200 recipes, tracked in git)
@@ -417,7 +399,7 @@ cp .env.example .env   # then set GEMINI_API_KEY
 python -u prepare_dataset.py --from-sample   # or use your full recipes.json
 ```
 
-### Option A — full stack with Docker (recommended for reviewers)
+### Option A — full stack with Docker
 
 Brings up **Postgres**, **Qdrant**, **FastAPI**, and **Streamlit**:
 
@@ -574,7 +556,7 @@ Allowed feedback values: `thumbs_up`, `thumbs_down`.
 - **Tools for facts:** macros come from Python lookup math, not model imagination.
 - **Observe everything:** Postgres logs query, match, output, latency, and feedback.
 - **Degrade gracefully:** embed quota exhaustion falls back to filter-only retrieval; monitoring outages do not take down the API.
-- **Modern GenAI SDK:** `google-genai` only (see `.cursorrules`).
+- **GenAI SDK:** `google-genai` (`from google import genai`).
 
 ---
 

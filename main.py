@@ -609,7 +609,7 @@ async def submit_feedback(body: FeedbackRequest) -> dict[str, Any]:
 
 @app.get("/api/monitoring/summary")
 async def monitoring_summary() -> dict[str, Any]:
-    """Compact interaction + judge metrics from Postgres (Zoomcamp-style)."""
+    """Interaction + judge metrics from Postgres."""
     try:
         return get_monitoring_summary()
     except Exception as exc:  # noqa: BLE001

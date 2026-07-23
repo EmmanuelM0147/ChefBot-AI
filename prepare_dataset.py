@@ -1,5 +1,5 @@
 """
-Prepare ChefBot recipe data for local ingest (Zoomcamp reproducibility).
+Prepare ChefBot recipe data for local ingest.
 
 Priority:
   1. dataset/recipes.json already present → validate & exit

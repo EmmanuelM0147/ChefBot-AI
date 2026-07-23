@@ -21,6 +21,8 @@ htmlcov/
 Thumbs.db
 .idea/
 .vscode/
+.cursor/
+.cursorrules
 *.swp
 *.swo
 

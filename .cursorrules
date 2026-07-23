@@ -1,3 +1,0 @@
-Always use the modern google-genai SDK (from google import genai).
-Always use asynchronous patterns for FastAPI routes.
-Prefer Qdrant Client for vector search implementations.

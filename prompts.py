@@ -1,7 +1,5 @@
 """
-ChefBot generation prompt approaches (for production + offline LLM A/B eval).
-
-Production uses DEFAULT_APPROACH — chosen by evaluate_llm.py (see README / evals/).
+ChefBot generation prompts (production + offline prompt comparison).
 """
 
 from __future__ import annotations
@@ -74,7 +72,7 @@ call it once, otherwise omit nutrition entirely.
     },
 }
 
-# Winner from offline A/B (evaluate_llm.py). Keep in sync with evals/llm_results.json.
+# Keep in sync with evaluate_llm.py / evals/llm_results.json.
 DEFAULT_APPROACH = "grounded_structured"
 SYSTEM_PROMPT = APPROACHES[DEFAULT_APPROACH]["system_prompt"]
 

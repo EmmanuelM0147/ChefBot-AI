@@ -1,10 +1,10 @@
 """
-Offline LLM approach A/B evaluation for ChefBot (Zoomcamp-style).
+Offline prompt comparison for ChefBot.
 
 For each inventory query:
   1. Retrieve hybrid context once (shared across approaches).
   2. Generate a recipe with each prompt approach (no tools — prose only).
-  3. Score each answer with the same Gemini LLM-as-judge.
+  3. Score each answer with the same Gemini judge.
 
 Writes evals/llm_results.json and prints the winning approach.
 Production uses prompts.DEFAULT_APPROACH (keep in sync with the winner).

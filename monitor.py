@@ -1,8 +1,5 @@
 """
-ChefBot monitoring - LLM Zoomcamp-style PostgreSQL interaction logging.
-
-Tracks each generation: user query, best matched recipe id, LLM output,
-response latency, and optional thumbs feedback.
+ChefBot monitoring: PostgreSQL logging for generations, latency, and feedback.
 """
 
 from __future__ import annotations
@@ -328,9 +325,7 @@ def save_interaction_safe(**kwargs: Any) -> None:
 
 def get_monitoring_summary() -> dict[str, Any]:
     """
-    Lightweight Zoomcamp-style metrics from Postgres.
-
-    This is the intended monitoring surface (Supabase + SQL/API), not Grafana.
+    Aggregate metrics from Postgres for the UI sidebar / summary endpoint.
     """
     with get_connection() as conn:
         with conn.cursor() as cur:

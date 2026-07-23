@@ -1,11 +1,9 @@
-# Screenshots for README / peer review
+# Screenshots
 
-Capture from the running app (local `http://localhost:8501` or Streamlit Cloud):
+Optional captures for the README:
 
 | File | What to show |
 |---|---|
-| `cook-ui.png` | Hero + fridge form (first viewport) |
-| `monitoring-dashboard.png` | Sidebar **View → Monitoring** with several charts |
-| `sample-recipe.png` | A generated plate + thumbs feedback |
-
-Tip (Streamlit): app menu (⋮) → record / or OS snipping tool.
+| `cook-ui.png` | Main page with the fridge form |
+| `monitoring-dashboard.png` | Monitoring view with charts |
+| `sample-recipe.png` | A generated recipe |

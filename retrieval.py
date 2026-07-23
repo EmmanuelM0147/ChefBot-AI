@@ -41,7 +41,7 @@ QUERY_VECTOR_CACHE_MAX = 512
 # Over-fetch factor before ingredient-overlap re-ranking.
 RERANK_CANDIDATE_MULTIPLIER = 3
 
-# Production default (winner of offline retrieval eval — see evaluate_retrieval.py).
+# Production default (see evaluate_retrieval.py / evals/retrieval_results.json).
 RetrievalMode = Literal["hybrid", "vector_only", "filter_only"]
 DEFAULT_RETRIEVAL_MODE: RetrievalMode = "hybrid"
 
@@ -435,7 +435,7 @@ async def search_recipes_with_mode(
     - vector_only: cosine rank with no inventory filter
     - filter_only: inventory MatchText filter, no vector ranking
 
-    Best-practice extras (on by default for production):
+    Production extras (on by default):
     - rewrite_query: expand inventory/diet into a richer retrieval query
     - rerank: over-fetch candidates, then re-rank by inventory overlap
     """
