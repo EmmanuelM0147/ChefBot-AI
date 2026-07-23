@@ -194,7 +194,7 @@ Production uses **`hybrid`** with **query rewriting** + **ingredient-overlap re-
 
 ### Retrieval extras
 
-| Practice | Implementation |
+| Feature | Implementation |
 |---|---|
 | Hybrid search | Dense cosine vectors **plus** inventory `MatchText` payload filter (evaluated vs `vector_only` / `filter_only`) |
 | User query rewriting | `rewrite_query_for_retrieval()` expands fridge lists + diet into a richer embedding query (synonyms / cooking intent) |
